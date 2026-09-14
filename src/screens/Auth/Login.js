@@ -53,9 +53,9 @@ const Login = () => {
       {/* HERO BAND */}
       <View style={styles.hero}>
         <Text style={styles.logo}>
-          Drive<Text style={styles.logoAccent}>Go</Text>
+          Caption<Text style={styles.logoAccent}>X</Text>
         </Text>
-        <Text style={styles.partner}>Partner</Text>
+        <Text style={styles.partner}>Customer</Text>
       </View>
 
       {/* TITLE */}

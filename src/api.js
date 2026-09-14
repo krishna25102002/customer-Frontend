@@ -1,4 +1,4 @@
-const API_BASE_URL = 'http://192.168.0.5:5000';
+const API_BASE_URL = 'http://192.168.74.163:5000';
 
 const request = async (path, method = 'GET', body = null, token = null) => {
   const headers = {};
@@ -122,5 +122,24 @@ export const getActionUpcomingBookings = (token) =>
 
 export const cancelActionBooking = (id, reason, token) =>
   request(`/api/action/customers/bookings/${id}/cancel`, 'POST', { reason }, token);
+
+// =====================
+// Acting Driver OTP trip + Payment
+// =====================
+// Generate the start/end OTP (read it to the driver).
+export const generateActionTripOtp = (id, token) =>
+  request(`/api/action/customers/bookings/${id}/otp`, 'POST', {}, token);
+
+// Create a Razorpay payment link for the completed trip fare.
+export const initiateActionPayment = (id, returnUrl, token) =>
+  request(`/api/action/customers/bookings/${id}/pay`, 'POST', { returnUrl }, token);
+
+// Verify the payment signature after the Razorpay page returns.
+export const verifyActionPayment = (id, payload, token) =>
+  request(`/api/action/customers/bookings/${id}/pay/verify`, 'POST', payload, token);
+
+// Get final fare + payment status for a completed trip.
+export const getActionTripFare = (id, token) =>
+  request(`/api/action/customers/bookings/${id}/fare`, 'GET', null, token);
 
 export default request;
