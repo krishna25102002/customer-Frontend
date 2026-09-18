@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -10,561 +10,686 @@ import {
   PanResponder,
   Dimensions,
   Alert,
+  Modal,
+  TextInput,
 } from 'react-native';
 import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { getActionBookingById, generateActionTripOtp } from '../../api';
+import {
+  getActionBookingById,
+  generateActionTripOtp,
+  previewActionCancellation,
+  cancelActionBooking,
+} from '../../api';
 import { C } from '../../theme';
 
 const { width } = Dimensions.get('window');
+
 const OTP_VALIDITY_SEC = 5 * 60;
 
-const TripDetails = ({ navigation, route }) => {
-  const { trip: initialTrip } = route.params;
+const CANCEL_REASONS = 
+[
+  { key: 'CUSTOMER_CHANGED_MIND', label: 'Customer changed mind' },
+  { key: 'CUSTOMER_NO_SHOW', label: 'Customer not available' },
+  { key: 'WRONG_PICKUP', label: 'Wrong pickup address' },
+  { key: 'WRONG_DROP', label: 'Wrong drop address' },
+  { key: 'LONG_WAIT', label: 'Driver taking too long' },
+  { key: 'OTHER', label: 'Other' },
+];
+
+const formatPrice = (n) =>
+  `₹${Number(n || 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
+
+const timeLeft = (endMs) =>
+  Math.max(0, Math.ceil((endMs - Date.now()) / 1000));
+
+  const TripDetails = ({ navigation, route }) => {
+  const initialTrip = route.params?.trip || {};
   const bookingId = initialTrip.id || initialTrip.bookingId;
 
   const [trip, setTrip] = useState(initialTrip);
-  const [status, setStatus] = useState(initialTrip.status?.toUpperCase() || 'CONFIRMED');
-  const [otp, setOtp] = useState('');
+  const [status, setStatus] = useState((initialTrip.status || 'CONFIRMED').toUpperCase());
+  const [otpCode, setOtpCode] = useState('');
   const [authed, setAuthed] = useState(false);
   const [generating, setGenerating] = useState(false);
-  const [elapsed, setElapsed] = useState(0);
+
+  const [cancelModal, setCancelModal] = useState(false);
+  const [cancelReason, setCancelReason] = useState(null);
+  const [cancelDesc, setCancelDesc] = useState('');
+  const [cancelBusy, setCancelBusy] = useState(false);
+
   const [otpSecondsLeft, setOtpSecondsLeft] = useState(0);
   const [otpGeneratedAt, setOtpGeneratedAt] = useState(null);
-
-  const pan = useRef(new Animated.ValueXY()).current;
-
-  // ---- Poll the live booking status on an interval ----
-  const load = useCallback(async () => {
-    try {
-      const token = await AsyncStorage.getItem('token');
-      if (token) setAuthed(true);
-      if (!token || !bookingId) return;
-      const res = await getActionBookingById(bookingId, token);
-      const b = res.booking || {};
-      // Refresh state from server
-      setTrip((prev) => ({ ...prev, ...b }));
-      setStatus(String(b.status || initialTrip.status || 'CONFIRMED').toUpperCase());
-    } catch (err) {
-      console.log('TRIP DETAILS ERR:', err.message || err);
-    }
-  }, [bookingId, initialTrip.status]);
+  const [loadError, setLoadError] = useState('');
+  const [reloadKey, setReloadKey] = useState(0);
+  const animY = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
-    load();
-    const t = setInterval(load, 5000);
-    const e = setInterval(() => {
-      if (trip.startedAt || trip.tripStartedAt) {
-        const start = new Date(trip.startedAt || trip.tripStartedAt).getTime();
-        setElapsed(Math.max(0, Math.floor((Date.now() - start) / 1000)));
-      } else {
-        setElapsed((prev) => prev + 1);
+    const load = async () => {
+      try {
+        const token = await AsyncStorage.getItem('token');
+        if (!token) return;
+        setAuthed(true);
+        if (bookingId) {
+          const b = await getActionBookingById(bookingId, token);
+          if (b?.booking) setTrip(b.booking);
+          if (b?.booking?.status) setStatus(b.booking.status.toUpperCase());
+        }
+      } catch (err) {
+        console.log('TRIP LOAD ERR:', err.response?.data || err.message);
       }
-      setOtpSecondsLeft((prev) => (otpGeneratedAt && prev > 0 ? prev - 1 : prev));
-    }, 1000);
-    return () => {
-      clearInterval(t);
-      clearInterval(e);
     };
-  }, [load, otpGeneratedAt, trip.startedAt, trip.tripStartedAt]);
+    load();
+  }, [bookingId, reloadKey]);
 
-  const onTripDate = () => {
-    if (!trip.fromDate) return true;
-    const d = new Date(trip.fromDate);
-    const now = new Date();
-    return (
-      d.getFullYear() === now.getFullYear() &&
-      d.getMonth() === now.getMonth() &&
-      d.getDate() === now.getDate()
-    );
-  };
-
-  const fmtOtpTime = (s) => {
-    const m = Math.floor(s / 60);
-    const sec = s % 60;
-    return `${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
-  };
-
-  const handleGenerateOtp = async () => {
-    if (!authed) {
-      Alert.alert('Login', 'Please log in first.');
-      return;
+  useEffect(() => {
+    let interval;
+    if (authed && bookingId && !['CONFIRMED', 'ONGOING'].includes(status)) {
+      return undefined;
     }
-    setGenerating(true);
+    interval = setInterval(async () => {
+      try {
+        const token = await AsyncStorage.getItem('token');
+        if (!token) return;
+        const b = await getActionBookingById(bookingId, token);
+        if (b?.booking) {
+          setTrip(b.booking);
+          if (b?.booking?.status) setStatus(b.booking.status.toUpperCase());
+        }
+      } catch (err) {
+        console.log('POLL ERR:', err.response?.data || err.message);
+      }
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [authed, bookingId, status]);
+
+  useEffect(() => {
+    if (!otpGeneratedAt) return undefined;
+    const t = setInterval(() => {
+      const left = timeLeft(otpGeneratedAt + OTP_VALIDITY_SEC * 1000);
+      setOtpSecondsLeft(left);
+      if (left <= 0) {
+        setOtpGeneratedAt(null);
+        setOtpSecondsLeft(0);
+        setOtpCode('');
+      }
+    }, 1000);
+    return () => clearInterval(t);
+  }, [otpGeneratedAt]);
+
+  const wrapDrag = useRef(new Animated.Value(0)).current;
+
+  const handleCallOtp = async () => {
     try {
       const token = await AsyncStorage.getItem('token');
+      if (!token) {
+        Alert.alert('Session Expired', 'Please log in again.');
+        return;
+      }
+      setGenerating(true);
       const res = await generateActionTripOtp(bookingId, token);
-      setOtp(String(res.otp));
-      const now = Date.now();
-      setOtpGeneratedAt(now);
+      setOtpCode(res?.otp || '');
+      setOtpGeneratedAt(Date.now());
       setOtpSecondsLeft(OTP_VALIDITY_SEC);
     } catch (err) {
-      console.log('OTP GEN ERR:', err);
-      Alert.alert('Cannot generate OTP', err.message || err.data?.message, [
-        { text: 'OK' },
-      ]);
+      Alert.alert(
+        'OTP Error',
+        err.response?.data?.message || err.message || 'Could not generate OTP.'
+      );
     } finally {
       setGenerating(false);
     }
   };
 
+  const handlePay = () => {
+    if (!bookingId) {
+      Alert.alert('Error', 'Missing booking information.');
+      return;
+    }
+    navigation.navigate('PaymentScreen', { trip: { ...trip, id: bookingId } });
+  };
+
+  const toggleReason = (r) =>
+    setCancelReason((prev) => (prev?.key === r.key ? null : r));
+
+  const closeCancelModal = () => {
+    setCancelModal(false);
+    setCancelReason(null);
+    setCancelDesc('');
+  };
+
+  const handleCancelTrip = () => {
+    setCancelModal(true);
+  };
+
+  const confirmCancelTrip = async () => {
+    if (!cancelReason) {
+      Alert.alert('Select a reason', 'Choose a reason to continue cancelling.');
+      return;
+    }
+    try {
+      const token = await AsyncStorage.getItem('token');
+      if (!token) {
+        Alert.alert('Session Expired', 'Please log in again.');
+        return;
+      }
+      setCancelBusy(true);
+      const reason = cancelDesc && cancelDesc.trim()
+        ? `${cancelReason.label} — ${cancelDesc.trim()}`
+        : cancelReason.label;
+      await cancelActionBooking(bookingId, reason, token);
+      Alert.alert('Trip Cancelled', 'Your trip has been cancelled.', [
+        { text: 'OK', onPress: () => navigation.goBack() },
+      ]);
+    } catch (err) {
+      Alert.alert(
+        'Cannot Cancel',
+        err.response?.data?.message || err.message || 'Something went wrong.'
+      );
+    } finally {
+      setCancelBusy(false);
+      closeCancelModal();
+    }
+  };
+
+  const driver = trip?.driver || trip?.driverDetails || {};
   const isStartable = status === 'CONFIRMED';
   const isOngoing = status === 'ONGOING';
   const isCompleted = status === 'COMPLETED';
 
-  // ---- Swipe-to-pay for completed trips ----
-  const panResponder = useRef(
+  const onDragRelease = () => {};
+  const cancelPanResponder = useRef(
     PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
       onMoveShouldSetPanResponder: () => true,
-      onPanResponderMove: Animated.event([null, { dx: pan.x }], {
-        useNativeDriver: false,
-      }),
-      onPanResponderRelease: (e, gesture) => {
-        if (gesture.dx > width * 0.6) {
-          navigation.navigate('PaymentScreen', { trip });
-        } else {
-          Animated.spring(pan, {
-            toValue: { x: 0, y: 0 },
-            useNativeDriver: false,
-          }).start();
-        }
-      },
+      onPanResponderRelease: onDragRelease,
     })
   ).current;
 
-  const driver = trip.driver && (trip.driver.name || trip.driver.fullName);
-
   return (
-    <ScrollView style={styles.container} contentContainerStyle={{ paddingBottom: 40 }}>
-      {/* Header */}
-      <View style={styles.headerRow}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-          <MaterialIcons name="arrow-back" size={22} color={C.text} />
-        </TouchableOpacity>
-        <View style={{ marginLeft: 12, flex: 1 }}>
-          <Text style={styles.title}>Trip #{trip.bookingNumber || bookingId}</Text>
-          <Text style={styles.subtitle}>{trip.pickupAddress || 'Pickup'} → {trip.dropAddress || 'Drop'}</Text>
-        </View>
-      </View>
-
-      {/* Status banner */}
-      <View style={styles.statusBanner}>
-        <MaterialIcons
-          name={isCompleted ? 'check-circle' : isOngoing ? 'directions-car' : 'event'}
-          size={20}
-          color={isCompleted ? C.success : C.accent}
-        />
-        <Text style={[styles.statusText, { color: isCompleted ? C.success : C.accent }]}>
-          {isCompleted ? 'Trip Completed' : isOngoing ? 'Trip Ongoing' : 'Confirmed — Awaiting Trip Date'}
-        </Text>
-      </View>
-
-      {/* Driver card */}
-      <View style={styles.driverCard}>
-        <View style={styles.avatar}>
-          <Text style={styles.avatarText}>{(driver || 'D').substring(0, 2).toUpperCase()}</Text>
-        </View>
-        <View style={{ marginLeft: 12, flex: 1 }}>
-          <Text style={styles.name}>{driver || 'Looking for driver…'}</Text>
-          <Text style={styles.meta}>
-            {trip.startTime ? `${trip.startTime} – ${trip.endTime || '…'}` : ''}
-            {trip.fromDate ? ` · ${new Date(trip.fromDate).toDateString()}` : ''}
-          </Text>
-        </View>
-        <MaterialIcons name="call" size={24} color={C.primary} />
-      </View>
-
-      {/* OTP section — only for CONFIRMED / ONGOING */}
-      {(isStartable || isOngoing) && authed && (
-        <View style={styles.otpCard}>
-          <View style={styles.otpHeader}>
-            <Text style={styles.otpTitle}>
-              {isOngoing ? 'End-Trip OTP' : 'Start-Trip OTP'}
-            </Text>
-            {otpGeneratedAt && otpSecondsLeft > 0 && (
-              <Text style={[styles.otpTimer, otpSecondsLeft < 60 && { color: C.danger }]}>
-                {fmtOtpTime(otpSecondsLeft)} left
-              </Text>
-            )}
-          </View>
-
-          {otp ? (
-            <View style={styles.otpRow}>
-              {otp.split('').map((d, i) => (
-                <View key={i} style={styles.otpBox}>
-                  <Text style={styles.otpDigit}>{d}</Text>
-                </View>
-              ))}
-            </View>
-          ) : (
-            <Text style={styles.otpHint}>
-              {isOngoing
-                ? 'Generate the end OTP and read it to the driver to finish the trip.'
-                : onTripDate()
-                ? 'Generate the start OTP and read it to the driver to begin.'
-                : 'Trip is scheduled for a future date. OTP unlocks on the trip date.'}
-            </Text>
-          )}
-
-          {isStartable && !onTripDate() && !otp ? (
-            <Text style={styles.gateNote}>
-              <MaterialIcons name="lock" size={14} color={C.warning} /> Starts on {trip.fromDate ? new Date(trip.fromDate).toDateString() : 'trip date'}
-            </Text>
-          ) : null}
-
-          <TouchableOpacity
-            style={[styles.otpBtn, generating && { opacity: 0.6 }]}
-            onPress={handleGenerateOtp}
-            disabled={generating || (isStartable && !onTripDate())}
-          >
-            {generating ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <Text style={styles.otpBtnText}>
-                {otp ? 'Regenerate OTP' : `Generate ${isOngoing ? 'End' : 'Start'} OTP`}
-              </Text>
-            )}
+    <ScrollView style={styles.container}>
+      {loadError ? (
+        <View style={styles.centerBox}>
+          <MaterialIcons name="error-outline" size={44} color={C.danger} />
+          <Text style={styles.errorText}>{loadError}</Text>
+          <TouchableOpacity style={styles.primaryBtn} onPress={() => setReloadKey((k) => k + 1)}>
+            <Text style={styles.primaryBtnText}>Retry</Text>
           </TouchableOpacity>
         </View>
-      )}
-
-      {/* Live timer for ongoing trips */}
-      {isOngoing && (
-        <View style={styles.timerCard}>
-          <MaterialIcons name="timer" size={18} color={C.accent} />
-          <Text style={styles.timerLabel}>Live trip duration</Text>
-          <Text style={styles.timerValue}>
-            {String(Math.floor(elapsed / 3600)).padStart(2, '0')}:
-            {String(Math.floor((elapsed % 3600) / 60)).padStart(2, '0')}:
-            {String(elapsed % 60).padStart(2, '0')}
-          </Text>
-        </View>
-      )}
-
-      {/* Completed — Swipe to pay */}
-      {isCompleted && (
-        <View style={styles.payCard}>
-          <Text style={styles.payTitle}>Final fare</Text>
-          <Text style={styles.payAmount}>
-            ₹{Math.round(trip.actualFare ?? trip.amount ?? trip.estimatedFare ?? 0)}
-          </Text>
-          {trip.fareBreakup && trip.fareBreakup.baseFare != null && (
-            <View style={styles.breakupBox}>
-              <View style={styles.breakupRow}>
-                <Text style={styles.breakupLabel}>Billable time</Text>
-                <Text style={styles.breakupValue}>{trip.fareBreakup.billableHours || 0} hrs</Text>
-              </View>
-              <View style={styles.breakupRow}>
-                <Text style={styles.breakupLabel}>Base fare</Text>
-                <Text style={styles.breakupValue}>₹{Math.round(trip.fareBreakup.baseFare)}</Text>
-              </View>
-              <View style={styles.breakupRow}>
-                <Text style={styles.breakupLabel}>Platform fee</Text>
-                <Text style={styles.breakupValue}>₹{Math.round(trip.fareBreakup.platformFee)}</Text>
-              </View>
-              <View style={styles.breakupRow}>
-                <Text style={styles.breakupLabel}>GST (18%)</Text>
-                <Text style={styles.breakupValue}>₹{Math.round(trip.fareBreakup.taxGst)}</Text>
+      ) : (
+        <>
+          <View style={styles.headerCard}>
+            <View style={styles.headerRow}>
+              <Text style={styles.bookingLabel}>
+                Booking #{trip?.bookingNumber || bookingId}
+              </Text>
+              <View style={[styles.statusBadge, statusBadgeColor(status)]}>
+                <Text style={[styles.statusText, statusTextColor(status)]}>{status}</Text>
               </View>
             </View>
-          )}
+            <Text style={styles.subLabel}>
+              {trip?.pickupAddressTxt || trip?.pickupAddress || 'Pickup TBD'}
+            </Text>
+            <Text style={styles.fareLine}>
+              {formatPrice(trip?.finalFare ?? trip?.estimatedFare)} · {trip?.estimatedKm || 0} km
+            </Text>
+          </View>
 
-          {trip.paymentStatus === 'Paid' ? (
-            <View style={styles.paidBadge}>
-              <MaterialIcons name="verified" size={16} color={C.success} />
-              <Text style={[styles.paidText, { color: C.success }]}>Paid</Text>
+          {driver?.name ? (
+            <View style={styles.driverCard}>
+              <View style={styles.avatar}>
+                <MaterialIcons name="person" size={40} color={C.primary} />
+              </View>
+              <View style={styles.driverInfo}>
+                <Text style={styles.driverName}>{driver.name}</Text>
+                <Text style={styles.driverSub}>{driver.vehicleName || driver.vehicle?.name || 'Driver'}</Text>
+              </View>
+              <TouchableOpacity
+                style={styles.callBtn}
+                onPress={() => Alert.alert('Call', `Calling ${driver.name}…`)}
+              >
+                <MaterialIcons name="call" size={22} color={C.white} />
+              </TouchableOpacity>
             </View>
           ) : (
-            <>
-              <View style={styles.swipeContainer}>
-                <Text style={styles.swipeText}>Swipe to Complete & Pay</Text>
-                <Animated.View
-                  style={[styles.swipeButton, { transform: [{ translateX: pan.x }] }]}
-                  {...panResponder.panHandlers}
-                >
-                  <MaterialIcons name="arrow-forward" size={20} color={C.accent} />
-                </Animated.View>
-              </View>
-              <TouchableOpacity style={styles.payDirectBtn} onPress={() => navigation.navigate('PaymentScreen', { trip })}>
-                <Text style={styles.payDirectText}>Pay ₹{Math.round(trip.actualFare ?? trip.amount ?? 0)}</Text>
-              </TouchableOpacity>
-            </>
+            <View style={styles.driverEmptyCard}>
+              <MaterialIcons name="person-search" size={30} color={C.textMuted} />
+              <Text style={styles.driverEmptyText}>Looking for a driver…</Text>
+            </View>
           )}
-        </View>
+
+          {(isStartable || isOngoing) && (
+            <View style={styles.otpCard}>
+              <Text style={styles.otpTitle}>
+                {isOngoing ? 'End trip OTP' : 'Start trip OTP'}
+              </Text>
+              <Text style={styles.otpHint}>
+                {isOngoing
+                  ? 'Generate this OTP and read it out so the driver can end the trip.'
+                  : 'Generate this OTP and read it out so the driver can start the trip.'}
+                {' '}Valid for {OTP_VALIDITY_SEC / 60} minutes.
+              </Text>
+              {otpGeneratedAt && otpCode ? (
+                <View style={styles.otpBox}>
+                  <Text style={styles.otpValue}>{otpCode}</Text>
+                  <Text style={styles.otpCountdown}>Read this OTP to your driver</Text>
+                </View>
+              ) : null}
+              <TouchableOpacity
+                style={[styles.primaryBtn, generating && { opacity: 0.6 }]}
+                onPress={handleCallOtp}
+                disabled={generating}
+              >
+                {generating ? (
+                  <ActivityIndicator color={C.white} />
+                ) : (
+                  <Text style={styles.primaryBtnText}>
+                    {otpGeneratedAt
+                      ? 'Regenerate OTP'
+                      : `Generate ${isOngoing ? 'End' : 'Start'} OTP`}
+                  </Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {isCompleted && (
+            <TouchableOpacity style={styles.payBtn} onPress={handlePay}>
+              <Text style={styles.payBtnText}>Pay Now</Text>
+            </TouchableOpacity>
+          )}
+
+          {!isCompleted && (
+            <TouchableOpacity style={styles.cancelBtn} onPress={handleCancelTrip}>
+              <MaterialIcons name="close" size={18} color={C.danger} />
+              <Text style={styles.cancelBtnText}>Cancel Trip</Text>
+            </TouchableOpacity>
+          )}
+
+          <Text style={styles.pollingNote}>
+            {isCompleted ? 'Trip completed.' : 'Auto-refreshing status…'}
+          </Text>
+        </>
       )}
 
-      {!isCompleted && (
-        <Text style={styles.pollingNote}>Auto-refreshing status…</Text>
-      )}
+      <Modal
+        transparent
+        visible={cancelModal}
+        animationType="fade"
+        onRequestClose={closeCancelModal}
+      >
+        <View style={styles.modalOverlay}>
+          <Animated.View style={[styles.modalCard, { transform: [{ translateY: animY }] }]}>
+            <Text style={styles.modalTitle}>Cancel Trip</Text>
+            <Text style={styles.modalSubtitle}>
+              Tell the driver why. This will end the booking and release the driver.
+            </Text>
+            {CANCEL_REASONS.map((r) => {
+              const selected = cancelReason?.key === r.key;
+              return (
+                <TouchableOpacity
+                  key={r.key}
+                  style={[styles.reasonRow, selected && styles.reasonRowSelected]}
+                  onPress={() => toggleReason(r)}
+                >
+                  <MaterialIcons
+                    name={selected ? 'radio-button-checked' : 'radio-button-unchecked'}
+                    size={20}
+                    color={selected ? C.danger : C.textMuted}
+                  />
+                  <Text style={[styles.reasonText, selected && styles.reasonTextSelected]}>
+                    {r.label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+            <TextInput
+              style={styles.noteInput}
+              placeholder="Add a note (optional)"
+              placeholderTextColor={C.textMuted}
+              value={cancelDesc}
+              onChangeText={setCancelDesc}
+              multiline
+            />
+            <View style={styles.btnRow}>
+              <TouchableOpacity style={[styles.btn, styles.btnCancel]} onPress={closeCancelModal}>
+                <Text style={[styles.btnText, { color: C.textSub }]}>Go Back</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.btn, styles.btnDanger, cancelBusy && { opacity: 0.6 }]}
+                onPress={confirmCancelTrip}
+                disabled={cancelBusy}
+              >
+                {cancelBusy ? (
+                  <ActivityIndicator color={C.white} />
+                ) : (
+                  <Text style={styles.btnTextDanger}>Cancel Trip</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </Animated.View>
+        </View>
+      </Modal>
     </ScrollView>
   );
 };
 
-export default TripDetails;
+const statusBadgeColor = (s) => {
+  switch (s) {
+    case 'CONFIRMED': return { backgroundColor: C.accentSoft };
+    case 'ONGOING': return { backgroundColor: C.infoSoft };
+    case 'COMPLETED': return { backgroundColor: C.successSoft };
+    case 'CANCELLED': return { backgroundColor: C.dangerSoft };
+    default: return { backgroundColor: C.primarySoft };
+  }
+};
+
+const statusTextColor = (s) => {
+  switch (s) {
+    case 'CONFIRMED': return { color: C.accentDark };
+    case 'ONGOING': return { color: C.info };
+    case 'COMPLETED': return { color: C.success };
+    case 'CANCELLED': return { color: C.danger };
+    default: return { color: C.textSub };
+  }
+};
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: C.bg,
-    padding: 20,
   },
-  headerRow: {
-    flexDirection: 'row',
+  centerBox: {
+    marginTop: 80,
     alignItems: 'center',
-    marginTop: 6,
+    padding: 30,
   },
-  backBtn: {
-    padding: 6,
+  errorText: {
+    marginTop: 12,
+    color: C.danger,
+    textAlign: 'center',
+    fontSize: 14,
+    lineHeight: 20,
   },
-  title: {
-    color: C.text,
-    fontSize: 20,
-    fontWeight: 'bold',
-  },
-  subtitle: {
-    color: C.textSub,
-    fontSize: 13,
-  },
-  statusBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  headerCard: {
+    margin: 14,
+    padding: 16,
     backgroundColor: C.surface,
     borderRadius: 14,
     borderWidth: 1,
     borderColor: C.border,
-    padding: 12,
-    marginTop: 18,
+  },
+  headerRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  bookingLabel: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: C.primary,
+    flex: 1,
+    marginRight: 8,
+  },
+  statusBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 999,
   },
   statusText: {
-    fontSize: 14,
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.4,
+  },
+  subLabel: {
+    marginTop: 8,
+    color: C.textSub,
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  fareLine: {
+    marginTop: 6,
+    color: C.text,
+    fontSize: 15,
     fontWeight: '600',
-    marginLeft: 8,
   },
   driverCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: C.surface,
-    padding: 16,
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: C.border,
-    marginTop: 14,
-  },
-  avatar: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    backgroundColor: C.primary,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  avatarText: {
-    color: '#fff',
-    fontWeight: 'bold',
-    fontSize: 17,
-  },
-  name: {
-    color: C.text,
-    fontWeight: 'bold',
-    fontSize: 16,
-  },
-  meta: {
-    color: C.textSub,
-    fontSize: 12,
-    marginTop: 2,
-  },
-  otpCard: {
-    backgroundColor: C.surface,
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: C.accentBorder,
-    borderTopWidth: 3,
-    borderTopColor: C.accent,
-    padding: 22,
-    alignItems: 'center',
-    marginTop: 18,
-  },
-  otpHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    alignSelf: 'stretch',
-  },
-  otpTitle: {
-    color: C.text,
-    fontWeight: 'bold',
-    fontSize: 16,
-  },
-  otpTimer: {
-    color: C.textMuted,
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  otpHint: {
-    color: C.textSub,
-    textAlign: 'center',
-    marginVertical: 14,
-    lineHeight: 20,
-  },
-  gateNote: {
-    color: C.warning,
-    fontSize: 12,
-    marginVertical: 8,
-  },
-  otpRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    width: '80%',
-    marginVertical: 14,
-  },
-  otpBox: {
-    width: 54,
-    height: 58,
-    borderRadius: 12,
-    backgroundColor: C.accentSoft,
-    borderWidth: 1.5,
-    borderColor: C.accent,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  otpDigit: {
-    color: C.accent,
-    fontSize: 30,
-    fontWeight: 'bold',
-  },
-  otpBtn: {
-    backgroundColor: C.accent,
-    paddingVertical: 13,
-    paddingHorizontal: 22,
-    borderRadius: 30,
-    marginTop: 8,
-    alignItems: 'center',
-    flexDirection: 'row',
-    justifyContent: 'center',
-    ...C.shadow,
-    shadowOpacity: 0.25,
-  },
-  otpBtnText: {
-    color: '#fff',
-    fontWeight: 'bold',
-    fontSize: 14,
-  },
-  timerCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    marginHorizontal: 14,
+    marginBottom: 14,
+    padding: 14,
     backgroundColor: C.surface,
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: C.accentBorder,
-    padding: 14,
-    marginTop: 14,
-  },
-  timerLabel: {
-    color: C.textSub,
-    marginLeft: 8,
-    flex: 1,
-  },
-  timerValue: {
-    color: C.accent,
-    fontWeight: 'bold',
-    fontSize: 18,
-    letterSpacing: 1,
-  },
-  payCard: {
-    backgroundColor: C.surface,
-    borderRadius: 18,
-    borderWidth: 1,
     borderColor: C.border,
-    padding: 20,
-    marginTop: 18,
-    alignItems: 'center',
   },
-  payTitle: {
+  avatar: {
+    width: 54,
+    height: 54,
+    borderRadius: 27,
+    backgroundColor: C.primarySoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  driverInfo: {
+    flex: 1,
+    marginLeft: 12,
+  },
+  driverName: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: C.text,
+  },
+  driverSub: {
+    marginTop: 2,
     color: C.textSub,
     fontSize: 13,
   },
-  payAmount: {
-    color: C.accent,
-    fontSize: 34,
-    fontWeight: 'bold',
-    marginVertical: 4,
+  callBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: C.accent,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  breakupBox: {
-    width: '100%',
-    backgroundColor: C.bg,
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 10,
-  },
-  breakupRow: {
+  driverEmptyCard: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingVertical: 2,
+    alignItems: 'center',
+    marginHorizontal: 14,
+    marginBottom: 14,
+    padding: 16,
+    backgroundColor: C.surfaceAlt,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: C.border,
   },
-  breakupLabel: {
+  driverEmptyText: {
+    marginLeft: 10,
+    color: C.textMuted,
+    fontSize: 14,
+  },
+  otpCard: {
+    marginHorizontal: 14,
+    marginBottom: 14,
+    padding: 16,
+    backgroundColor: C.surface,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: C.border,
+  },
+  otpTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: C.primary,
+  },
+  otpHint: {
+    marginTop: 4,
     color: C.textSub,
     fontSize: 12,
+    lineHeight: 17,
   },
-  breakupValue: {
-    color: C.text,
+  otpValue: {
+    marginTop: 8,
+    fontSize: 30,
+    fontWeight: '800',
+    color: C.accent,
+    letterSpacing: 4,
+  },
+  otpBox: {
+    marginTop: 12,
+    backgroundColor: C.surfaceAlt,
+    borderRadius: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+  },
+  otpCountdown: {
+    marginTop: 2,
+    color: C.textMuted,
     fontSize: 12,
-    fontWeight: '600',
   },
-  paidBadge: {
+  primaryBtn: {
+    marginTop: 12,
+    backgroundColor: C.accent,
+    paddingVertical: 14,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  primaryBtnText: {
+    color: C.white,
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  cancelBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: C.successSoft || '#e8f5e9',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 20,
-    marginTop: 8,
+    justifyContent: 'center',
+    marginHorizontal: 14,
+    marginTop: 4,
+    paddingVertical: 14,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    borderColor: C.danger,
+    backgroundColor: C.surface,
   },
-  paidText: {
-    fontWeight: 'bold',
-    fontSize: 14,
-    marginLeft: 4,
-  },
-  payDirectBtn: {
-    width: '100%',
-    padding: 14,
-    borderRadius: 30,
-    borderWidth: 1,
-    borderColor: C.accent,
-    alignItems: 'center',
-    marginTop: 10,
-  },
-  payDirectText: {
-    color: C.accent,
-    fontWeight: 'bold',
+  cancelBtnText: {
+    marginLeft: 6,
+    color: C.danger,
     fontSize: 15,
+    fontWeight: '700',
   },
-  swipeContainer: {
-    width: '100%',
-    backgroundColor: C.accent,
-    borderRadius: 30,
-    padding: 10,
-    justifyContent: 'center',
-  },
-  swipeText: {
-    color: '#fff',
-    textAlign: 'center',
-    fontWeight: '600',
-  },
-  swipeButton: {
-    position: 'absolute',
-    left: 10,
-    backgroundColor: '#fff',
-    height: 52,
-    width: 52,
-    borderRadius: 26,
-    justifyContent: 'center',
+  payBtn: {
     alignItems: 'center',
-    ...C.shadow,
+    justifyContent: 'center',
+    marginHorizontal: 14,
+    marginBottom: 14,
+    paddingVertical: 15,
+    borderRadius: 10,
+    backgroundColor: C.success,
+  },
+  payBtnText: {
+    color: C.white,
+    fontSize: 15,
+    fontWeight: '700',
   },
   pollingNote: {
-    color: C.textMuted,
     textAlign: 'center',
-    fontSize: 11,
+    color: C.textMuted,
+    fontSize: 12,
+    marginVertical: 18,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    justifyContent: 'center',
+    padding: 20,
+  },
+  modalCard: {
+    backgroundColor: C.surface,
+    borderRadius: 16,
+    padding: 20,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: C.primary,
+  },
+  modalSubtitle: {
+    marginTop: 6,
+    marginBottom: 12,
+    color: C.textSub,
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  reasonRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 13,
+    paddingHorizontal: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: C.border,
+    marginBottom: 8,
+    backgroundColor: C.surfaceAlt,
+  },
+  reasonRowSelected: {
+    borderColor: C.danger,
+    backgroundColor: C.dangerSoft,
+  },
+  reasonText: {
+    marginLeft: 10,
+    fontSize: 14,
+    color: C.text,
+  },
+  reasonTextSelected: {
+    color: C.danger,
+    fontWeight: '700',
+  },
+  noteInput: {
+    minHeight: 56,
+    borderWidth: 1,
+    borderColor: C.borderDark,
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    fontSize: 14,
+    color: C.text,
+    textAlignVertical: 'top',
+    marginTop: 6,
+  },
+  btnRow: {
+    flexDirection: 'row',
     marginTop: 16,
   },
+  btn: {
+    flex: 1,
+    paddingVertical: 14,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  btnCancel: {
+    backgroundColor: C.surfaceAlt,
+    borderWidth: 1,
+    borderColor: C.borderDark,
+    marginRight: 8,
+  },
+  btnDanger: {
+    backgroundColor: C.danger,
+    marginLeft: 8,
+  },
+  btnText: {
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  btnTextDanger: {
+    color: C.white,
+    fontSize: 15,
+    fontWeight: '700',
+  },
 });
+
+export default TripDetails;

@@ -109,8 +109,8 @@ const CalendarPicker = ({ visible, value, onSelect, onClose }) => {
           </View>
 
           <View style={styles.weekRow}>
-            {WEEKDAYS.map((w) => (
-              <Text key={w} style={styles.weekLabel}>{w}</Text>
+            {WEEKDAYS.map((w, i) => (
+              <Text key={`${w}-${i}`} style={styles.weekLabel}>{w}</Text>
             ))}
           </View>
 

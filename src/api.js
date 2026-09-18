@@ -1,4 +1,4 @@
-const API_BASE_URL = 'http://192.168.74.163:5000';
+const API_BASE_URL = 'http://192.168.0.9:5000';
 
 const request = async (path, method = 'GET', body = null, token = null) => {
   const headers = {};
@@ -122,6 +122,9 @@ export const getActionUpcomingBookings = (token) =>
 
 export const cancelActionBooking = (id, reason, token) =>
   request(`/api/action/customers/bookings/${id}/cancel`, 'POST', { reason }, token);
+
+export const previewActionCancellation = (id, token) =>
+  request(`/api/action/customers/bookings/${id}/cancel/preview`, 'GET', null, token);
 
 // =====================
 // Acting Driver OTP trip + Payment

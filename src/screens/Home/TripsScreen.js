@@ -97,6 +97,11 @@ const normalizeBooking = (b) => {
       : null,
     requestedAt: b.bookingCreatedAt || b.createdAt || b.requestedAt || null,
     paymentStatus: b.paymentStatus || 'Pending',
+    cancelledBy: b.cancelledBy || null,
+    cancelReason: b.cancelReason || null,
+    unavailabilityDescription: b.unavailabilityDescription || null,
+    cancelledAt: b.cancelledAt || null,
+    flowStatus: b.flowStatus || null,
   };
 };
 
@@ -110,6 +115,21 @@ const TripsScreen = ({ navigation }) => {
   const [trips, setTrips] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [customerName, setCustomerName] = useState('');
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const raw = await AsyncStorage.getItem('customer');
+        if (raw) {
+          const c = JSON.parse(raw);
+          setCustomerName(c?.fullName || c?.name || '');
+        }
+      } catch (e) {
+        console.log('CUSTOMER NAME ERR:', e);
+      }
+    })();
+  }, []);
 
   const load = useCallback(async () => {
     try {
@@ -169,6 +189,7 @@ const TripsScreen = ({ navigation }) => {
 
   const renderTrip = ({ item }) => {
     const meta = STATUS_META(item.status);
+    const isCancelled = groupOf(item.status) === 'Cancelled';
     const dateText =
       item.toDate && new Date(item.toDate).toDateString() !== new Date(item.fromDate).toDateString()
         ? `${fmtDate(item.fromDate)} – ${fmtDate(item.toDate)}`
@@ -177,7 +198,12 @@ const TripsScreen = ({ navigation }) => {
     const initials = (item.driver?.name || 'D').substring(0, 2).toUpperCase();
 
     return (
-      <TouchableOpacity activeOpacity={0.82} onPress={() => navigation.navigate('TripDetails', { trip: item })}>
+      <TouchableOpacity
+        activeOpacity={0.82}
+        onPress={() => {
+          if (!isCancelled) navigation.navigate('TripDetails', { trip: item });
+        }}
+      >
         <View style={styles.card}>
           <View style={[styles.statusRail, { backgroundColor: meta.color }]} />
 
@@ -240,6 +266,15 @@ const TripsScreen = ({ navigation }) => {
                 <Text style={styles.payBadgeText}>{item.paymentStatus}</Text>
               </View>
             </View>
+
+            {isCancelled && (item.cancelReason || item.unavailabilityDescription) && (
+              <View style={styles.reasonBox}>
+                <MaterialIcons name="info" size={14} color={C.danger} />
+                <Text style={styles.reasonText}>
+                  {[item.unavailabilityDescription, item.cancelReason].filter(Boolean).join(' — ')}
+                </Text>
+              </View>
+            )}
           </View>
         </View>
       </TouchableOpacity>
@@ -645,6 +680,23 @@ const styles = StyleSheet.create({
     color: C.textSub,
     fontSize: 10,
     fontWeight: '700',
+  },
+
+  reasonBox: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    backgroundColor: '#F3F3F5',
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    marginTop: 10,
+  },
+
+  reasonText: {
+    color: C.textSub,
+    fontSize: 12,
+    marginLeft: 6,
+    flex: 1,
   },
 
   empty: {

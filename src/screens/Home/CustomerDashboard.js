@@ -1702,7 +1702,7 @@ const CustomerDashboard = ({
         <Text
           style={styles.label}
         >
-          Drop
+          Drop [optional]
         </Text>
 
         <View

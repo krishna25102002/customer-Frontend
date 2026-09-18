@@ -10,7 +10,7 @@ import {
   Alert,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { getActionBookings, cancelActionBooking } from '../../api';
+import { getActionBookings, cancelActionBooking, previewActionCancellation } from '../../api';
 import BottomTab from '../../components/BottomTab';
 import { C } from '../../theme';
 
@@ -35,14 +35,6 @@ const RequestsScreen = ({ navigation }) => {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [cancellingId, setCancellingId] = useState(null);
-
-  const fetchTab = async (key) => {
-    const tab = TABS.find((t) => t.key === key);
-    const token = await AsyncStorage.getItem('token');
-    if (!token) return;
-    const data = await getActionBookings(tab.status, token);
-    setLists((prev) => ({ ...prev, [key]: data.bookings || [] }));
-  };
 
   const loadAll = useCallback(async () => {
     try {
@@ -75,36 +67,58 @@ const RequestsScreen = ({ navigation }) => {
     setRefreshing(false);
   };
 
-  const handleCancel = (booking) => {
+  const doCancel = async (booking) => {
+    setCancellingId(booking.id);
+    try {
+      const token = await AsyncStorage.getItem('token');
+      await cancelActionBooking(booking.id, 'Cancelled by customer', token);
+      await loadAll();
+      Alert.alert('Cancelled', 'Booking cancelled');
+    } catch (err) {
+      Alert.alert('Error', err.message || 'Could not cancel booking');
+    } finally {
+      setCancellingId(null);
+    }
+  };
+
+  const confirmCancel = (booking, feeNote) => {
     Alert.alert(
       'Cancel Booking',
-      `Cancel booking ${booking.bookingNumber}?`,
+      `Cancel booking ${booking.bookingNumber}?${feeNote ? `\n\n${feeNote}` : ''}`,
       [
         { text: 'No', style: 'cancel' },
-        {
-          text: 'Yes, Cancel',
-          style: 'destructive',
-          onPress: async () => {
-            setCancellingId(booking.id);
-            try {
-              const token = await AsyncStorage.getItem('token');
-              await cancelActionBooking(booking.id, 'Cancelled by customer', token);
-              await fetchTab('requested');
-              Alert.alert('Cancelled', 'Booking request cancelled');
-            } catch (err) {
-              Alert.alert('Error', err.message || 'Could not cancel booking');
-            } finally {
-              setCancellingId(null);
-            }
-          },
-        },
+        { text: 'Yes, Cancel', style: 'destructive', onPress: () => doCancel(booking) },
       ]
     );
+  };
+
+  const handleCancel = async (booking) => {
+    if (booking.status !== 'CONFIRMED') {
+      confirmCancel(booking, null);
+      return;
+    }
+    try {
+      const token = await AsyncStorage.getItem('token');
+      const preview = await previewActionCancellation(booking.id, token);
+      const fee = Number(preview.cancellationFee || 0);
+      confirmCancel(
+        booking,
+        fee > 0
+          ? `A cancellation fee of ₹${fee.toLocaleString('en-IN')} will be added to your dues.`
+          : 'No cancellation fee applies at this stage.'
+      );
+    } catch (err) {
+      confirmCancel(booking, null);
+    }
   };
 
   const renderBooking = ({ item }) => {
     const meta = STATUS_META[item.status] || STATUS_META.CANCELLED;
     const isRequested = item.status === 'PENDING';
+    const isReassigning = item.flowStatus === 'DRIVER_REASSIGNING';
+    const isNoShowReassign = isReassigning && item.unavailabilityReason === 'DRIVER_NO_SHOW' && !item.driver;
+    const cancelledWithFee = item.status === 'CANCELLED' && Number(item.amountDue) > 0;
+    const showDriver = item.status === 'CONFIRMED' || item.status === 'ONGOING';
     return (
       <View style={styles.card}>
         <View style={styles.cardHeader}>
@@ -119,6 +133,18 @@ const RequestsScreen = ({ navigation }) => {
             ₹{item.amount != null ? Number(item.amount).toLocaleString('en-IN') : 0}
           </Text>
         </View>
+
+        {isReassigning && (
+          <View style={styles.reassignNote}>
+            <Text style={styles.reassignNoteText}>
+              {item.unavailabilityDescription
+                ? `${item.unavailabilityDescription} — finding a replacement…`
+                : isNoShowReassign
+                  ? 'Driver did not show up — finding a replacement…'
+                  : 'Driver unavailable — finding a replacement…'}
+            </Text>
+          </View>
+        )}
 
         <View style={styles.divider} />
 
@@ -143,15 +169,37 @@ const RequestsScreen = ({ navigation }) => {
 
         <View style={styles.summaryPill}>
           <Text style={styles.summaryText}>
-            {item.driver
-              ? `✓ Accepted by ${item.driver.fullName}`
-              : item.requestSummary
-                ? `${item.requestSummary.accepted} accepted • ${item.requestSummary.rejected} rejected • ${item.requestSummary.pending} waiting`
-                : 'No response yet'}
+            {isReassigning
+              ? item.unavailabilityDescription
+                ? item.unavailabilityDescription
+                : isNoShowReassign
+                  ? 'Driver did not show up — finding a replacement…'
+                  : 'Driver unavailable — finding a replacement…'
+              : item.driver && showDriver
+                ? `✓ Accepted by ${item.driver.fullName}`
+                : item.requestSummary
+                  ? `${item.requestSummary.accepted} accepted • ${item.requestSummary.rejected} rejected • ${item.requestSummary.pending} waiting`
+                  : 'No response yet'}
           </Text>
         </View>
 
-        {isRequested && (
+        {cancelledWithFee && (
+          <View style={styles.feeDue}>
+            <Text style={styles.feeDueText}>
+              Cancellation fee payable: ₹{Number(item.amountDue).toLocaleString('en-IN')}
+            </Text>
+          </View>
+        )}
+
+        {item.status === 'CANCELLED' && (item.cancelReason || item.unavailabilityDescription) && (
+          <View style={styles.cancelReasonBox}>
+            <Text style={styles.cancelReasonText}>
+              {[item.unavailabilityDescription, item.cancelReason].filter(Boolean).join(' — ')}
+            </Text>
+          </View>
+        )}
+
+        {(isRequested || item.status === 'CONFIRMED') && (
           <TouchableOpacity
             style={styles.cancelBtn}
             onPress={() => handleCancel(item)}
@@ -160,7 +208,7 @@ const RequestsScreen = ({ navigation }) => {
             {cancellingId === item.id ? (
               <ActivityIndicator color={C.danger} />
             ) : (
-              <Text style={styles.cancelText}>Cancel Request</Text>
+              <Text style={styles.cancelText}>{isRequested ? 'Cancel Request' : 'Cancel Booking'}</Text>
             )}
           </TouchableOpacity>
         )}
@@ -349,6 +397,41 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   summaryText: {
+    color: C.textSub,
+    fontSize: 12,
+  },
+  reassignNote: {
+    backgroundColor: '#FFF4D6',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginTop: 10,
+  },
+  reassignNoteText: {
+    color: C.warning,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  feeDue: {
+    backgroundColor: C.dangerSoft || '#FEE',
+    marginTop: 10,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  feeDueText: {
+    color: C.danger,
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
+  cancelReasonBox: {
+    backgroundColor: '#F3F3F5',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginTop: 10,
+  },
+  cancelReasonText: {
     color: C.textSub,
     fontSize: 12,
   },
