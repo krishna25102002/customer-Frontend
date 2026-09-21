@@ -7,17 +7,18 @@ import {
   TouchableOpacity,
   TextInput,
   Image,
-  Alert,
   ActivityIndicator,
 } from 'react-native';
 import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useAuth } from '../context/AuthContext';
 import { updateCustomerProfile } from '../api';
+import { useAlert } from './AlertProvider';
 import { C } from '../theme';
 
 const EditProfileScreen = ({ navigation }) => {
   const { customer, updateCustomer, refreshProfile } = useAuth();
+  const alert = useAlert();
 
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -38,7 +39,7 @@ const EditProfileScreen = ({ navigation }) => {
   // 📸 Pick Image (Dummy for now)
   //////////////////////////////////////////////////////////
   const handlePickImage = () => {
-    Alert.alert('Upload Photo', 'Image picker integration needed');
+    alert.info('Upload Photo', 'Image picker integration needed');
   };
 
   //////////////////////////////////////////////////////////
@@ -46,7 +47,7 @@ const EditProfileScreen = ({ navigation }) => {
   //////////////////////////////////////////////////////////
   const handleSave = async () => {
     if (!name || !phone) {
-      Alert.alert('Error', 'Please fill all fields');
+      alert.warning('Incomplete details', 'Please fill all fields');
       return;
     }
 
@@ -54,7 +55,7 @@ const EditProfileScreen = ({ navigation }) => {
     try {
       const token = await AsyncStorage.getItem('token');
       if (!token) {
-        Alert.alert('Error', 'Please login first');
+        alert.info('Please login first', 'Your session has expired. Please log in again.');
         return;
       }
 
@@ -62,14 +63,14 @@ const EditProfileScreen = ({ navigation }) => {
       if (data.customer) {
         await updateCustomer(data.customer);
         await refreshProfile();
-        Alert.alert('Success', 'Profile updated!');
+        alert.success('Profile updated!', 'Changes saved successfully.');
         if (navigation) navigation.goBack();
       } else {
-        Alert.alert('Error', data.message || 'Could not update profile');
+        alert.error('Could not update', data.message || 'Could not update profile');
       }
     } catch (err) {
       console.log('UPDATE PROFILE ERR:', err);
-      Alert.alert('Error', err.message || 'Could not update profile');
+      alert.error('Could not update', err.message || 'Could not update profile');
     } finally {
       setSaving(false);
     }

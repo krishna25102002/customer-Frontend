@@ -5,24 +5,25 @@ import {
   TextInput,
   TouchableOpacity,
   StyleSheet,
-  Alert,
   ActivityIndicator,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import { useNavigation } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { loginCustomer } from '../../api';
+import { useAlert } from '../../components/AlertProvider';
 import { C } from '../../theme';
 
 const Login = () => {
   const navigation = useNavigation();
+  const alert = useAlert();
   const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
 
   const handleLogin = async () => {
     if (!phone || !password) {
-      Alert.alert('Error', 'Please enter phone number and password');
+      alert.warning('Incomplete details', 'Please enter phone number and password');
       return;
     }
 
@@ -38,11 +39,11 @@ const Login = () => {
           routes: [{ name: 'customerHome' }],
         });
       } else {
-        Alert.alert('Error', data.message || 'Login failed');
+        alert.error('Login failed', data.message || 'Login failed');
       }
     } catch (err) {
       console.log('LOGIN ERR:', err);
-      Alert.alert('Error', err.message || 'Login failed');
+      alert.error('Login failed', err.message || 'Please check your details and try again.');
     } finally {
       setLoading(false);
     }
@@ -90,7 +91,7 @@ const Login = () => {
       </View>
 
       {/* FORGOT */}
-      <TouchableOpacity onPress={() => Alert.alert('Info', 'Contact support to reset your password')}>
+      <TouchableOpacity onPress={() => alert.info('Reset password', 'Please contact our support team to reset your password.')}>
         <Text style={styles.forgot}>Forgot Password?</Text>
       </TouchableOpacity>
 

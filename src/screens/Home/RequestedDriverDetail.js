@@ -5,11 +5,11 @@ import {
   StyleSheet,
   TouchableOpacity,
   ActivityIndicator,
-  Alert,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { getDriverRequestById, cancelDriverRequest } from '../../api';
+import { useAlert } from '../../components/AlertProvider';
 import { C } from '../../theme';
 
 const STATUS_META = {
@@ -21,6 +21,7 @@ const STATUS_META = {
 
 const RequestedDriverDetail = ({ route, navigation }) => {
   const { requestId } = route.params;
+  const alert = useAlert();
   const [req, setReq] = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -33,7 +34,7 @@ const RequestedDriverDetail = ({ route, navigation }) => {
       }
     } catch (err) {
       console.log('REQ DETAIL ERR:', err);
-      Alert.alert('Error', 'Could not load request');
+      alert.error('Could not load', 'We could not load this request.');
     } finally {
       setLoading(false);
     }
@@ -47,23 +48,23 @@ const RequestedDriverDetail = ({ route, navigation }) => {
   }, [requestId]);
 
   const handleCancel = async () => {
-    Alert.alert('Cancel Request', 'Cancel this request?', [
-      { text: 'No', style: 'cancel' },
-      {
-        text: 'Yes, Cancel',
-        style: 'destructive',
-        onPress: async () => {
-          try {
-            const token = await AsyncStorage.getItem('token');
-            await cancelDriverRequest(requestId, token);
-            Alert.alert('Cancelled', 'Request cancelled');
-            load();
-          } catch (err) {
-            Alert.alert('Error', err.message || 'Could not cancel');
-          }
-        },
+    alert.confirm({
+      title: 'Cancel request',
+      message: 'Are you sure you want to cancel this request?',
+      confirmText: 'Yes, Cancel',
+      cancelText: 'No',
+      destructive: true,
+      onConfirm: async () => {
+        try {
+          const token = await AsyncStorage.getItem('token');
+          await cancelDriverRequest(requestId, token);
+          alert.success('Cancelled', 'Your request has been cancelled.');
+          load();
+        } catch (err) {
+          alert.error('Could not cancel', err.message || 'Please try again.');
+        }
       },
-    ]);
+    });
   };
 
   if (loading) {

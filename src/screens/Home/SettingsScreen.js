@@ -10,13 +10,14 @@ import {
 import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 import { useNavigation } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Alert } from 'react-native';
 import BottomTab from '../../components/BottomTab';
+import { useAlert } from '../../components/AlertProvider';
 import { useAuth } from '../../context/AuthContext';
 import { C, shadow } from '../../theme';
 
 const SettingsScreen = () => {
   const navigation = useNavigation();
+  const alert = useAlert();
   const { customer, refreshProfile } = useAuth();
 
   const [notifications, setNotifications] = useState(true);
@@ -41,31 +42,24 @@ const SettingsScreen = () => {
   };
 
   const handleLogout = () => {
-    Alert.alert(
-      "Logout",
-      "Are you sure you want to logout?",
-      [
-        {
-          text: "Cancel",
-          style: "cancel"
-        },
-        {
-          text: "Logout",
-          style: "destructive",
-          onPress: async () => {
-            try {
-              await AsyncStorage.clear();
-              navigation.reset({
-                index: 0,
-                routes: [{ name: 'Login' }],
-              });
-            } catch (error) {
-              console.log("Logout Error:", error);
-            }
-          }
+    alert.confirm({
+      title: 'Logout',
+      message: 'Are you sure you want to logout?',
+      confirmText: 'Logout',
+      cancelText: 'Cancel',
+      destructive: true,
+      onConfirm: async () => {
+        try {
+          await AsyncStorage.clear();
+          navigation.reset({
+            index: 0,
+            routes: [{ name: 'Login' }],
+          });
+        } catch (error) {
+          console.log("Logout Error:", error);
         }
-      ]
-    );
+      },
+    });
   };
 
   const userName = customer?.name || 'User';
@@ -101,12 +95,12 @@ const SettingsScreen = () => {
       {/* ⚡ Availability */}
       <Text style={styles.sectionTitle}>AVAILABILITY</Text>
 
-      <SettingToggle
+      {/* <SettingToggle
         icon="location-on"
         label="Online Status"
         value={isOnline}
         onValueChange={setIsOnline}
-      />
+      /> */}
 
       <SettingToggle
         icon="notifications"

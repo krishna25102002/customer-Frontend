@@ -4,15 +4,16 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
-  Alert,
   ActivityIndicator,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createBooking, getAppConfig } from '../../api';
+import { useAlert } from '../../components/AlertProvider';
 import { C } from '../../theme';
 
 const AdvanceBooking = ({ route, navigation }) => {
   const { driver } = route.params;
+  const alert = useAlert();
   const [paymentMode, setPaymentMode] = useState('UPI');
   const [loading, setLoading] = useState(false);
   const [perHourRate, setPerHourRate] = useState(210);
@@ -39,7 +40,7 @@ const AdvanceBooking = ({ route, navigation }) => {
     try {
       const token = await AsyncStorage.getItem('token');
       if (!token) {
-        Alert.alert('Error', 'Please login first');
+        alert.info('Please login first', 'Your session has expired. Please log in again.');
         setLoading(false);
         return;
       }
@@ -61,14 +62,14 @@ const AdvanceBooking = ({ route, navigation }) => {
       console.log('📤 Create booking:', payload);
       const data = await createBooking(payload, token);
 
-      Alert.alert('Success', data.message || 'Booking created!');
+      alert.success('Booking created!', data.message || 'Your booking has been created.');
       navigation.replace('WaitingScreen', {
         driver,
         booking: data.booking,
       });
     } catch (err) {
       console.log('❌ Booking error:', err);
-      Alert.alert('Error', err.message || 'Could not create booking');
+      alert.error('Could not book', err.message || 'Could not create booking');
     } finally {
       setLoading(false);
     }

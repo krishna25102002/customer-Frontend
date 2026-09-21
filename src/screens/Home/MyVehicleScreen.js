@@ -7,7 +7,6 @@ import {
   TouchableOpacity,
   TextInput,
   ScrollView,
-  Alert,
   ActivityIndicator,
 } from 'react-native';
 import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
@@ -17,9 +16,11 @@ import {
   addCustomerVehicle,
   updateCustomerVehicleModel,
 } from '../../api';
+import { useAlert } from '../../components/AlertProvider';
 import { C } from '../../theme';
 
 const MyVehicleScreen = ({ navigation }) => {
+  const alert = useAlert();
   const [vehicles, setVehicles] = useState([]);
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState(null);
@@ -36,7 +37,7 @@ const MyVehicleScreen = ({ navigation }) => {
       setVehicles(data.vehicles || []);
     } catch (err) {
       console.log('LOAD VEHICLES ERR:', err);
-      Alert.alert('Error', err.message || 'Could not load vehicles');
+      alert.error('Could not load', err.message || 'Could not load your vehicles');
     } finally {
       setLoading(false);
     }
@@ -55,23 +56,23 @@ const MyVehicleScreen = ({ navigation }) => {
   const saveModel = async (vehicle) => {
     const model = (vehicle.model || '').trim();
     if (!model) {
-      Alert.alert('Error', 'Please enter the car model');
+      alert.warning('Missing model', 'Please enter the car model');
       return;
     }
     setSavingId(vehicle._id);
     try {
       const token = await AsyncStorage.getItem('token');
       if (!token) {
-        Alert.alert('Error', 'Please login first');
+        alert.info('Please login first', 'Your session has expired. Please log in again.');
         return;
       }
       const data = await updateCustomerVehicleModel(vehicle._id, { model }, token);
       if (data.success) {
         loadVehicles();
-        Alert.alert('Success', 'Vehicle model updated');
+        alert.success('Updated!', 'Vehicle model updated.');
       }
     } catch (err) {
-      Alert.alert('Error', err.message || 'Could not update model');
+      alert.error('Could not update', err.message || 'Could not update model');
     } finally {
       setSavingId(null);
     }
@@ -79,14 +80,14 @@ const MyVehicleScreen = ({ navigation }) => {
 
   const handleAdd = async () => {
     if (!newModel.trim()) {
-      Alert.alert('Error', 'Please enter the car model');
+      alert.warning('Missing model', 'Please enter the car model');
       return;
     }
     setAdding(true);
     try {
       const token = await AsyncStorage.getItem('token');
       if (!token) {
-        Alert.alert('Error', 'Please login first');
+        alert.info('Please login first', 'Your session has expired. Please log in again.');
         return;
       }
       const data = await addCustomerVehicle(
@@ -98,10 +99,10 @@ const MyVehicleScreen = ({ navigation }) => {
         setNewBrand('');
         setShowAdd(false);
         await loadVehicles();
-        Alert.alert('Success', 'Vehicle added');
+        alert.success('Vehicle added', 'Your vehicle has been added successfully.');
       }
     } catch (err) {
-      Alert.alert('Error', err.message || 'Could not add vehicle');
+      alert.error('Could not add', err.message || 'Could not add vehicle');
     } finally {
       setAdding(false);
     }

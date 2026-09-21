@@ -9,7 +9,6 @@ import {
   Animated,
   PanResponder,
   Dimensions,
-  Alert,
   Modal,
   TextInput,
 } from 'react-native';
@@ -20,7 +19,9 @@ import {
   generateActionTripOtp,
   previewActionCancellation,
   cancelActionBooking,
+  rateActionBooking,
 } from '../../api';
+import { useAlert } from '../../components/AlertProvider';
 import { C } from '../../theme';
 
 const { width } = Dimensions.get('window');
@@ -43,9 +44,18 @@ const formatPrice = (n) =>
 const timeLeft = (endMs) =>
   Math.max(0, Math.ceil((endMs - Date.now()) / 1000));
 
+const formatElapsed = (s) => {
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${pad(h)}:${pad(m)}:${pad(sec)}`;
+};
+
   const TripDetails = ({ navigation, route }) => {
   const initialTrip = route.params?.trip || {};
   const bookingId = initialTrip.id || initialTrip.bookingId;
+  const alert = useAlert();
 
   const [trip, setTrip] = useState(initialTrip);
   const [status, setStatus] = useState((initialTrip.status || 'CONFIRMED').toUpperCase());
@@ -58,11 +68,61 @@ const timeLeft = (endMs) =>
   const [cancelDesc, setCancelDesc] = useState('');
   const [cancelBusy, setCancelBusy] = useState(false);
 
+  const [rating, setRating] = useState(initialTrip.rating || null);
+  const [rated, setRated] = useState(!!initialTrip.rating);
+  const [rateModal, setRateModal] = useState(false);
+  const [rateStars, setRateStars] = useState(0);
+  const [rateComment, setRateComment] = useState('');
+  const [rateBusy, setRateBusy] = useState(false);
+  const ratingShownFor = useRef('');
+
   const [otpSecondsLeft, setOtpSecondsLeft] = useState(0);
   const [otpGeneratedAt, setOtpGeneratedAt] = useState(null);
   const [loadError, setLoadError] = useState('');
   const [reloadKey, setReloadKey] = useState(0);
   const animY = useRef(new Animated.Value(0)).current;
+
+  const [elapsed, setElapsed] = useState(0);
+  const startedAtRef = useRef(null);
+
+  useEffect(() => {
+    startedAtRef.current = trip?.startedAt || null;
+  }, [trip?.startedAt]);
+
+  useEffect(() => {
+    if (status !== 'ONGOING' || !startedAtRef.current) return undefined;
+    const tick = () => {
+      const base = startedAtRef.current;
+      if (base) {
+        setElapsed(
+          Math.max(0, Math.floor((Date.now() - new Date(base).getTime()) / 1000))
+        );
+      }
+    };
+    tick();
+    const t = setInterval(tick, 1000);
+    return () => clearInterval(t);
+  }, [status]);
+
+  const applyBooking = (b) => {
+    if (!b?.booking) return;
+    setTrip(b.booking);
+    if (b.booking.status) setStatus(b.booking.status.toUpperCase());
+    setRated(!!b.booking.rated);
+    setRating(b.booking.rating || null);
+
+    // Auto-open the rating popup once a trip completes (unless already rated).
+    if (
+      b.booking.status === 'Completed' &&
+      !b.booking.rated &&
+      ratingShownFor.current !== String(b.booking.id)
+    ) {
+      ratingShownFor.current = String(b.booking.id);
+      setRateStars(0);
+      setRateComment('');
+      setRateModal(true);
+    }
+  };
 
   useEffect(() => {
     const load = async () => {
@@ -72,8 +132,7 @@ const timeLeft = (endMs) =>
         setAuthed(true);
         if (bookingId) {
           const b = await getActionBookingById(bookingId, token);
-          if (b?.booking) setTrip(b.booking);
-          if (b?.booking?.status) setStatus(b.booking.status.toUpperCase());
+          applyBooking(b);
         }
       } catch (err) {
         console.log('TRIP LOAD ERR:', err.response?.data || err.message);
@@ -92,10 +151,7 @@ const timeLeft = (endMs) =>
         const token = await AsyncStorage.getItem('token');
         if (!token) return;
         const b = await getActionBookingById(bookingId, token);
-        if (b?.booking) {
-          setTrip(b.booking);
-          if (b?.booking?.status) setStatus(b.booking.status.toUpperCase());
-        }
+        applyBooking(b);
       } catch (err) {
         console.log('POLL ERR:', err.response?.data || err.message);
       }
@@ -123,7 +179,7 @@ const timeLeft = (endMs) =>
     try {
       const token = await AsyncStorage.getItem('token');
       if (!token) {
-        Alert.alert('Session Expired', 'Please log in again.');
+        alert.info('Session expired', 'Please log in again.');
         return;
       }
       setGenerating(true);
@@ -132,9 +188,9 @@ const timeLeft = (endMs) =>
       setOtpGeneratedAt(Date.now());
       setOtpSecondsLeft(OTP_VALIDITY_SEC);
     } catch (err) {
-      Alert.alert(
-        'OTP Error',
-        err.response?.data?.message || err.message || 'Could not generate OTP.'
+      alert.error(
+        'Could not generate OTP',
+        err.response?.data?.message || err.message || 'Please try again.'
       );
     } finally {
       setGenerating(false);
@@ -143,10 +199,47 @@ const timeLeft = (endMs) =>
 
   const handlePay = () => {
     if (!bookingId) {
-      Alert.alert('Error', 'Missing booking information.');
+      alert.error('Missing information', 'We could not find this booking.');
       return;
     }
     navigation.navigate('PaymentScreen', { trip: { ...trip, id: bookingId } });
+  };
+
+  const openRateModal = () => {
+    setRateStars(0);
+    setRateComment('');
+    setRateModal(true);
+  };
+
+  const submitRating = async () => {
+    if (rateStars < 1) {
+      alert.warning('Select a rating', 'Tap a star to rate your driver.');
+      return;
+    }
+    try {
+      const token = await AsyncStorage.getItem('token');
+      if (!token) {
+        alert.info('Session expired', 'Please log in again.');
+        return;
+      }
+      setRateBusy(true);
+      await rateActionBooking(
+        bookingId,
+        { stars: rateStars, comment: rateComment.trim() },
+        token
+      );
+      setRated(true);
+      setRating({ stars: rateStars, comment: rateComment.trim() });
+      setRateModal(false);
+      alert.success('Thanks!', 'Your rating helps track driver performance.');
+    } catch (err) {
+      alert.error(
+        'Could not submit rating',
+        err.response?.data?.message || err.message || 'Please try again.'
+      );
+    } finally {
+      setRateBusy(false);
+    }
   };
 
   const toggleReason = (r) =>
@@ -164,13 +257,13 @@ const timeLeft = (endMs) =>
 
   const confirmCancelTrip = async () => {
     if (!cancelReason) {
-      Alert.alert('Select a reason', 'Choose a reason to continue cancelling.');
+      alert.warning('Select a reason', 'Choose a reason to continue cancelling.');
       return;
     }
     try {
       const token = await AsyncStorage.getItem('token');
       if (!token) {
-        Alert.alert('Session Expired', 'Please log in again.');
+        alert.info('Session expired', 'Please log in again.');
         return;
       }
       setCancelBusy(true);
@@ -178,12 +271,11 @@ const timeLeft = (endMs) =>
         ? `${cancelReason.label} — ${cancelDesc.trim()}`
         : cancelReason.label;
       await cancelActionBooking(bookingId, reason, token);
-      Alert.alert('Trip Cancelled', 'Your trip has been cancelled.', [
-        { text: 'OK', onPress: () => navigation.goBack() },
-      ]);
+      alert.success('Trip cancelled', 'Your trip has been cancelled.');
+      navigation.goBack();
     } catch (err) {
-      Alert.alert(
-        'Cannot Cancel',
+      alert.error(
+        'Cannot cancel',
         err.response?.data?.message || err.message || 'Something went wrong.'
       );
     } finally {
@@ -246,7 +338,7 @@ const timeLeft = (endMs) =>
               </View>
               <TouchableOpacity
                 style={styles.callBtn}
-                onPress={() => Alert.alert('Call', `Calling ${driver.name}…`)}
+                onPress={() => alert.info('Calling driver', `Calling ${driver.name}…`)}
               >
                 <MaterialIcons name="call" size={22} color={C.white} />
               </TouchableOpacity>
@@ -257,6 +349,19 @@ const timeLeft = (endMs) =>
               <Text style={styles.driverEmptyText}>Looking for a driver…</Text>
             </View>
           )}
+
+          {isOngoing ? (
+            <View style={styles.liveCard}>
+              <View style={styles.livePill}>
+                <MaterialIcons name="timer" size={14} color={C.accentBorder} />
+                <Text style={styles.livePillText}>LIVE TRIP</Text>
+              </View>
+              <Text style={styles.liveTimer}>{formatElapsed(elapsed)}</Text>
+              <Text style={styles.liveSub}>
+                Trip in progress — from {trip?.pickupAddressTxt || trip?.pickupAddress || 'pickup'}
+              </Text>
+            </View>
+          ) : null}
 
           {(isStartable || isOngoing) && (
             <View style={styles.otpCard}>
@@ -299,7 +404,29 @@ const timeLeft = (endMs) =>
             </TouchableOpacity>
           )}
 
-          {!isCompleted && (
+          {isCompleted && (
+            <TouchableOpacity
+              style={[styles.rateCard, rated && styles.rateCardDone]}
+              onPress={rated ? null : openRateModal}
+              disabled={rated}
+            >
+              <MaterialIcons
+                name={rated ? 'check-circle' : 'star'}
+                size={20}
+                color={rated ? C.success : C.warning}
+              />
+              <Text style={[styles.rateCardText, rated && { color: C.success }]}>
+                {rated
+                  ? `You rated ★ ${rating?.stars} / 5`
+                  : 'Rate your driver'}
+              </Text>
+              {!rated && (
+                <MaterialIcons name="chevron-right" size={20} color={C.textMuted} />
+              )}
+            </TouchableOpacity>
+          )}
+
+          {!isCompleted && !isOngoing && (
             <TouchableOpacity style={styles.cancelBtn} onPress={handleCancelTrip}>
               <MaterialIcons name="close" size={18} color={C.danger} />
               <Text style={styles.cancelBtnText}>Cancel Trip</Text>
@@ -364,6 +491,70 @@ const timeLeft = (endMs) =>
                   <ActivityIndicator color={C.white} />
                 ) : (
                   <Text style={styles.btnTextDanger}>Cancel Trip</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </Animated.View>
+        </View>
+      </Modal>
+
+      <Modal
+        transparent
+        visible={rateModal}
+        animationType="fade"
+        onRequestClose={() => !rateBusy && setRateModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <Animated.View style={[styles.modalCard, { transform: [{ translateY: animY }] }]}>
+            <View style={styles.rateHeader}>
+              <Text style={styles.rateTitle}>Rate your driver</Text>
+              <Text style={styles.rateSubtitle}>
+                {driver?.fullName || driver?.name || 'Your driver'}
+              </Text>
+            </View>
+            <View style={styles.starRow}>
+              {[1, 2, 3, 4, 5].map((n) => (
+                <TouchableOpacity
+                  key={n}
+                  style={styles.starBtn}
+                  onPress={() => setRateStars(n)}
+                >
+                  <MaterialIcons
+                    name={n <= rateStars ? 'star' : 'star-border'}
+                    size={38}
+                    color={n <= rateStars ? C.warning : C.textMuted}
+                  />
+                </TouchableOpacity>
+              ))}
+            </View>
+            <Text style={styles.rateHint}>
+              {rateStars ? `${rateStars} / 5` : 'Tap a star to rate this trip'}
+            </Text>
+            <TextInput
+              style={styles.noteInput}
+              placeholder="Add a comment (optional)"
+              placeholderTextColor={C.textMuted}
+              value={rateComment}
+              onChangeText={setRateComment}
+              multiline
+            />
+            <View style={styles.btnRow}>
+              <TouchableOpacity
+                style={[styles.btn, styles.btnCancel, rateBusy && { opacity: 0.6 }]}
+                onPress={() => setRateModal(false)}
+                disabled={rateBusy}
+              >
+                <Text style={[styles.btnText, { color: C.textSub }]}>Skip</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.btn, styles.btnRate, rateBusy && { opacity: 0.6 }]}
+                onPress={submitRating}
+                disabled={rateBusy}
+              >
+                {rateBusy ? (
+                  <ActivityIndicator color={C.white} />
+                ) : (
+                  <Text style={styles.btnTextDanger}>Submit Rating</Text>
                 )}
               </TouchableOpacity>
             </View>
@@ -510,6 +701,44 @@ const styles = StyleSheet.create({
     color: C.textMuted,
     fontSize: 14,
   },
+  liveCard: {
+    marginHorizontal: 14,
+    marginBottom: 14,
+    paddingVertical: 18,
+    paddingHorizontal: 16,
+    borderRadius: 14,
+    backgroundColor: C.primary,
+    alignItems: 'center',
+  },
+  livePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.14)',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 999,
+  },
+  livePillText: {
+    marginLeft: 4,
+    color: C.accentBorder,
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.6,
+  },
+  liveTimer: {
+    marginTop: 10,
+    color: C.white,
+    fontSize: 36,
+    fontWeight: '800',
+    letterSpacing: 2,
+    fontVariant: ['tabular-nums'],
+  },
+  liveSub: {
+    marginTop: 4,
+    color: 'rgba(255,255,255,0.85)',
+    fontSize: 12,
+    textAlign: 'center',
+  },
   otpCard: {
     marginHorizontal: 14,
     marginBottom: 14,
@@ -594,6 +823,61 @@ const styles = StyleSheet.create({
     color: C.white,
     fontSize: 15,
     fontWeight: '700',
+  },
+  rateCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginHorizontal: 14,
+    marginBottom: 14,
+    paddingVertical: 15,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    borderColor: C.warning,
+    backgroundColor: C.surface,
+  },
+  rateCardDone: {
+    borderColor: C.success,
+    borderStyle: 'dashed',
+  },
+  rateCardText: {
+    flex: 1,
+    marginLeft: 8,
+    color: C.warning,
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  rateHeader: {
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  rateTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: C.primary,
+  },
+  rateSubtitle: {
+    marginTop: 4,
+    color: C.textSub,
+    fontSize: 13,
+  },
+  starRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    marginVertical: 14,
+  },
+  starBtn: {
+    paddingHorizontal: 6,
+  },
+  rateHint: {
+    textAlign: 'center',
+    color: C.textMuted,
+    fontSize: 12,
+    marginBottom: 8,
+  },
+  btnRate: {
+    backgroundColor: C.accent,
+    marginLeft: 8,
   },
   pollingNote: {
     textAlign: 'center',

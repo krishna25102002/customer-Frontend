@@ -15,7 +15,6 @@ import {
   TouchableOpacity,
   Animated,
   ActivityIndicator,
-  Alert,
   RefreshControl,
   Modal,
   Platform,
@@ -27,13 +26,17 @@ import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 import BottomTab from '../../components/BottomTab';
 import DatePickerField from '../../components/DatePickerField';
 import TimePickerField from '../../components/TimePickerField';
+import { useAlert } from '../../components/AlertProvider';
 
 import {
   getNearbyDrivers,
   getAppConfig,
   getActionAvailableDrivers,
   createActionBooking,
+  getActionBookings,
 } from '../../api';
+
+import { formatElapsed, liveBill, runElapsed } from '../../utils/liveBill';
 
 import { C } from '../../theme';
 
@@ -784,6 +787,8 @@ const CustomerDashboard = ({
   navigation,
   route,
 }) => {
+  const alert = useAlert();
+
   const [drivers, setDrivers] =
     useState([]);
 
@@ -854,6 +859,105 @@ const CustomerDashboard = ({
     ).current;
 
   /* ========================================================
+     LIVE TRIP OVERVIEW
+  ======================================================== */
+
+  const [liveTrip, setLiveTrip] =
+    useState(null);
+
+  const [liveSeconds, setLiveSeconds] =
+    useState(0);
+
+  const loadLiveTrip = useCallback(
+    async () => {
+      try {
+        const token =
+          await AsyncStorage.getItem(
+            'token'
+          );
+
+        if (!token) {
+          return;
+        }
+
+        const data =
+          await getActionBookings(
+            'CONFIRMED,ONGOING',
+            token
+          );
+
+        const list = (
+          data.bookings ||
+          []
+        ).filter(
+          (b) =>
+            b.status ===
+              'CONFIRMED' ||
+            b.status ===
+              'ONGOING'
+        );
+
+        setLiveTrip((prev) => {
+          const next =
+            list.find(
+              (b) =>
+                b.status ===
+                'ONGOING'
+            ) ||
+            list[0] ||
+            null;
+
+          if (!next) {
+            return prev;
+          }
+
+          return {
+            ...prev,
+            ...next,
+          };
+        });
+      } catch (err) {
+        console.log(
+          'LIVE TRIP LOAD ERR:',
+          err
+        );
+      }
+    },
+    []
+  );
+
+  useEffect(() => {
+    loadLiveTrip();
+
+    const t = setInterval(
+      loadLiveTrip,
+      8000
+    );
+
+    return () =>
+      clearInterval(t);
+  }, [loadLiveTrip]);
+
+  const liveStopToken =
+    liveTrip &&
+    liveTrip.status ===
+      'ONGOING'
+      ? liveTrip.startedAt ||
+        null
+      : null;
+
+  useEffect(() => {
+    if (!liveStopToken) {
+      return undefined;
+    }
+
+    return runElapsed(
+      liveStopToken,
+      setLiveSeconds
+    );
+  }, [liveStopToken]);
+
+  /* ========================================================
      CALCULATIONS
   ======================================================== */
 
@@ -873,6 +977,17 @@ const CustomerDashboard = ({
 
   const fare =
     hours * perHourRate;
+
+  const liveBillData =
+    liveTrip &&
+    liveTrip.status ===
+      'ONGOING'
+      ? liveBill(
+          liveSeconds,
+          liveTrip.perHourRate ||
+            perHourRate
+        )
+      : null;
 
   const selectedCount =
     Object.keys(selected).length;
@@ -1063,8 +1178,8 @@ const CustomerDashboard = ({
           Object.keys(next)
             .length >= 10
         ) {
-          Alert.alert(
-            'Error',
+          alert.warning(
+            'Too many drivers',
             'A booking can be sent to a maximum of 10 drivers'
           );
 
@@ -1106,9 +1221,9 @@ const CustomerDashboard = ({
             );
 
           if (!token) {
-            Alert.alert(
-              'Error',
-              'Please login first'
+            alert.info(
+              'Please login first',
+              'Your session has expired. Please log in again.'
             );
 
             return;
@@ -1154,10 +1269,9 @@ const CustomerDashboard = ({
             err
           );
 
-          Alert.alert(
-            'Error',
-            err.message ||
-              'Could not load drivers'
+          alert.error(
+            'Could not load drivers',
+            err.message || 'Please try again.'
           );
         }
       },
@@ -1165,6 +1279,7 @@ const CustomerDashboard = ({
         date,
         startTime,
         endTime,
+        alert,
       ]
     );
 
@@ -1178,8 +1293,8 @@ const CustomerDashboard = ({
         Object.keys(selected);
 
       if (ids.length === 0) {
-        Alert.alert(
-          'Error',
+        alert.warning(
+          'No driver selected',
           'Please select at least one driver'
         );
 
@@ -1195,9 +1310,9 @@ const CustomerDashboard = ({
           );
 
         if (!token) {
-          Alert.alert(
-            'Error',
-            'Please login first'
+          alert.info(
+            'Please login first',
+            'Your session has expired. Please log in again.'
           );
 
           return;
@@ -1219,8 +1334,8 @@ const CustomerDashboard = ({
             token
           );
 
-        Alert.alert(
-          'Request Sent',
+        alert.success(
+          'Request sent!',
           `Booking ${
             data.booking
               ?.bookingNumber || ''
@@ -1249,10 +1364,10 @@ const CustomerDashboard = ({
           err
         );
 
-        Alert.alert(
-          'Error',
+        alert.error(
+          'Could not create booking',
           err.message ||
-            'Could not create booking'
+            'Please try again.'
         );
       } finally {
         setSending(false);
@@ -1523,6 +1638,182 @@ const CustomerDashboard = ({
           </View>
         </View>
       </Animated.View>
+
+      {/* ==================================================
+          LIVE TRIP OVERVIEW CARD
+      ================================================== */}
+
+      {liveTrip && (
+        <TouchableOpacity
+          style={[
+            styles.liveCard,
+            liveTrip.status ===
+              'ONGOING' &&
+              styles.liveCardOngoing,
+          ]}
+          activeOpacity={0.9}
+          onPress={() =>
+            navigation.navigate(
+              'TripDetails',
+              {
+                trip: {
+                  id:
+                    liveTrip.id,
+                  bookingNumber:
+                    liveTrip.bookingNumber,
+                  status:
+                    liveTrip.status,
+                  pickupAddress:
+                    liveTrip.pickupAddress,
+                  dropAddress:
+                    liveTrip.dropAddress,
+                  startedAt:
+                    liveTrip.startedAt,
+                },
+              }
+            )
+          }
+        >
+          <View
+            style={
+              styles.liveCardHeader
+            }
+          >
+            <View
+              style={
+                styles.livePillBubble
+              }
+            >
+              <MaterialIcons
+                name={
+                  liveTrip.status ===
+                  'ONGOING'
+                    ? 'timer'
+                    : 'event'
+                }
+                size={14}
+                color={
+                  C.accentBorder
+                }
+              />
+              <Text
+                style={
+                  styles.livePillBubbleText
+                }
+              >
+                {liveTrip.status ===
+                'ONGOING'
+                  ? 'LIVE TRIP'
+                  : 'TRIP CONFIRMED'}
+              </Text>
+            </View>
+            <Text
+              style={
+                styles.liveBookingNo
+              }
+            >
+              {liveTrip.bookingNumber ||
+                'Booking'}
+            </Text>
+          </View>
+
+          <Text
+            style={styles.liveRoute}
+            numberOfLines={1}
+          >
+            {liveTrip.pickupAddress ||
+              'Pickup location'}
+          </Text>
+
+          {liveTrip.status ===
+            'ONGOING' &&
+          liveTrip.startedAt ? (
+            <>
+              <Text
+                style={
+                  styles.liveTimer
+                }
+              >
+                {formatElapsed(
+                  liveSeconds
+                )}
+              </Text>
+              <View
+                style={
+                  styles.liveBillRow
+                }
+              >
+                <Text
+                  style={
+                    styles.liveBillLabel
+                  }
+                >
+                  Running bill (~{
+                    liveBillData
+                      ? liveBillData.billableHours
+                      : 0
+                  }{' '}
+                  hrs)
+                </Text>
+                <Text
+                  style={
+                    styles.liveBillValue
+                  }
+                >
+                  ₹
+                  {(
+                    liveBillData
+                      ? liveBillData.total
+                      : 0
+                  ).toLocaleString(
+                    'en-IN'
+                  )}
+                </Text>
+              </View>
+            </>
+          ) : (
+            <Text
+              style={
+                styles.liveSub
+              }
+            >
+              Driver assigned •{' '}
+              {liveTrip.fromDate
+                ? new Date(
+                    liveTrip.fromDate
+                  ).toLocaleDateString(
+                    'en-IN',
+                    {
+                      weekday:
+                        'short',
+                      day:
+                        'numeric',
+                      month:
+                        'short',
+                    }
+                  )
+                : 'Scheduled'}{' '}
+              •{' '}
+              {liveTrip.startTime ||
+                ''}
+            </Text>
+          )}
+
+          <View
+            style={
+              styles.liveCta
+            }
+          >
+            <Text
+              style={
+                styles.liveCtaText
+              }
+            >
+              View trip details →
+            </Text>
+          </View>
+        </TouchableOpacity>
+      )}
 
       {/* ==================================================
           BOOKING WIDGET
@@ -2146,6 +2437,110 @@ const styles = StyleSheet.create({
     flex: 1,
     color: C.text,
     padding: 12,
+  },
+
+  /* ========================================================
+     LIVE TRIP CARD
+  ======================================================== */
+
+  liveCard: {
+    marginBottom: 14,
+    borderRadius: 20,
+    padding: 16,
+    backgroundColor: C.primary,
+    ...C.shadow,
+    shadowOpacity: 0.22,
+  },
+
+  liveCardOngoing: {
+    borderWidth: 1,
+    borderColor: C.accentBorder,
+  },
+
+  liveCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+
+  livePillBubble: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.14)',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 999,
+  },
+
+  livePillBubbleText: {
+    marginLeft: 4,
+    color: C.accentBorder,
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.6,
+  },
+
+  liveBookingNo: {
+    color: 'rgba(255,255,255,0.75)',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+
+  liveRoute: {
+    marginTop: 10,
+    color: C.white,
+    fontSize: 15,
+    fontWeight: '600',
+  },
+
+  liveTimer: {
+    marginTop: 10,
+    color: C.white,
+    fontSize: 32,
+    fontWeight: '800',
+    letterSpacing: 2,
+    fontVariant: ['tabular-nums'],
+  },
+
+  liveBillRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255,255,255,0.15)',
+  },
+
+  liveBillLabel: {
+    color: 'rgba(255,255,255,0.7)',
+    fontSize: 13,
+  },
+
+  liveBillValue: {
+    color: C.accentBorder,
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+
+  liveSub: {
+    marginTop: 8,
+    color: 'rgba(255,255,255,0.85)',
+    fontSize: 13,
+  },
+
+  liveCta: {
+    marginTop: 14,
+    alignItems: 'center',
+    backgroundColor: C.accent,
+    borderRadius: 30,
+    paddingVertical: 11,
+  },
+
+  liveCtaText: {
+    color: C.white,
+    fontSize: 13,
+    fontWeight: 'bold',
   },
 
   /* ========================================================

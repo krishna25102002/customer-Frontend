@@ -6,16 +6,17 @@ import {
   TouchableOpacity,
   StyleSheet,
   ScrollView,
-  Alert,
   ActivityIndicator,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { registerCustomer, loginCustomer } from '../../api';
+import { useAlert } from '../../components/AlertProvider';
 import { C } from '../../theme';
 
 const RegisterScreen = () => {
   const navigation = useNavigation();
+  const alert = useAlert();
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
@@ -26,7 +27,7 @@ const RegisterScreen = () => {
 
   const handleSubmit = async () => {
     if (!name || !phone || !password) {
-      Alert.alert('Error', 'Please fill Name, Phone and Password');
+      alert.warning('Incomplete details', 'Please fill Name, Phone and Password');
       return;
     }
 
@@ -44,14 +45,14 @@ const RegisterScreen = () => {
         await AsyncStorage.setItem('customer', JSON.stringify(loginData.customer));
       }
 
-      Alert.alert('Success', 'Account created. Welcome!');
+      alert.success('Welcome!', 'Your account has been created.');
       navigation.reset({
         index: 0,
         routes: [{ name: 'customerHome' }],
       });
     } catch (err) {
       console.log('❌ Register ERROR:', err);
-      Alert.alert('Error', err.message || 'Something went wrong');
+      alert.error('Could not register', err.message || 'Something went wrong');
     } finally {
       setLoading(false);
     }

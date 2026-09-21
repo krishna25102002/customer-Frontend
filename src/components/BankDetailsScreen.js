@@ -6,18 +6,19 @@ import {
   SafeAreaView,
   TouchableOpacity,
   TextInput,
-  Alert,
   ActivityIndicator,
 } from 'react-native';
 import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useAuth } from '../context/AuthContext';
+import { useAlert } from './AlertProvider';
 import { C } from '../theme';
 
 const STORAGE_KEY = 'customerBankDetails';
 
 const BankDetailsScreen = ({ navigation }) => {
   const { customer } = useAuth();
+  const alert = useAlert();
 
   const [editing, setEditing] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -53,7 +54,7 @@ const BankDetailsScreen = ({ navigation }) => {
 
   const handleSave = async () => {
     if (!accountHolder || !bankName || !accountNumber || !ifsc) {
-      Alert.alert('Error', 'Please fill all bank details');
+      alert.warning('Incomplete details', 'Please fill all bank details');
       return;
     }
     setSaving(true);
@@ -63,10 +64,10 @@ const BankDetailsScreen = ({ navigation }) => {
         JSON.stringify({ accountHolder, bankName, accountNumber, ifsc })
       );
       setEditing(false);
-      Alert.alert('Success', 'Bank details saved');
+      alert.success('Saved!', 'Your bank details have been saved.');
     } catch (e) {
       console.log('SAVE BANK ERR:', e);
-      Alert.alert('Error', 'Could not save bank details');
+      alert.error('Could not save', 'We could not save your bank details. Please try again.');
     } finally {
       setSaving(false);
     }

@@ -7,7 +7,6 @@ import {
   ActivityIndicator,
   ScrollView,
   Linking,
-  Alert,
 } from 'react-native';
 import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -15,11 +14,13 @@ import {
   getActionTripFare,
   initiateActionPayment,
 } from '../../api';
+import { useAlert } from '../../components/AlertProvider';
 import { C } from '../../theme';
 
 const PaymentScreen = ({ route, navigation }) => {
   const { trip } = route.params || {};
   const bookingId = trip?.id || trip?.bookingId;
+  const alert = useAlert();
 
   const [fare, setFare] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -56,7 +57,7 @@ const PaymentScreen = ({ route, navigation }) => {
 
   const handlePay = async () => {
     if (!bookingId) {
-      Alert.alert('Error', 'Missing booking information.');
+      alert.error('Missing information', 'We could not find this booking.');
       return;
     }
     setPaying(true);
@@ -72,13 +73,13 @@ const PaymentScreen = ({ route, navigation }) => {
       await Linking.openURL(url);
       // Opening the Razorpay page returns to the app only after the user
       // completes it in the browser. Verify the payment on return note.
-      Alert.alert(
-        'Payment',
-        'Complete payment in the browser, then tap "I\'ve Paid" when back.'
+      alert.info(
+        'Almost done',
+        'Complete the payment in the browser, then tap "I\'ve Paid" when you come back.'
       );
     } catch (err) {
       console.log('PAY INIT ERR:', err);
-      Alert.alert('Error', err.message || 'Could not start payment');
+      alert.error('Could not start payment', err.message || 'Please try again.');
     } finally {
       setPaying(false);
     }
@@ -98,16 +99,16 @@ const PaymentScreen = ({ route, navigation }) => {
       if (paidStatus) {
         setPaid(true);
         setFare(res.booking?.fareBreakup || fare);
-        Alert.alert('Payment Successful', 'Thank you for your payment!');
+        alert.success('Payment Successful', 'Thank you for your payment!');
       } else {
-        Alert.alert(
-          'Payment Pending',
+        alert.warning(
+          'Payment pending',
           'Payment could not be confirmed yet. Complete it in the browser and try again.'
         );
       }
     } catch (err) {
       console.log('VERIFY ERR:', err);
-      Alert.alert('Error', err.message || 'Could not verify payment');
+      alert.error('Could not verify', err.message || 'Could not verify payment');
     } finally {
       setVerifying(false);
     }

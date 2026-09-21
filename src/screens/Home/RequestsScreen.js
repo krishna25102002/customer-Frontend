@@ -7,29 +7,60 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   RefreshControl,
-  Alert,
 } from 'react-native';
+import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getActionBookings, cancelActionBooking, previewActionCancellation } from '../../api';
 import BottomTab from '../../components/BottomTab';
+import { useAlert } from '../../components/AlertProvider';
+import { formatElapsed, liveBill } from '../../utils/liveBill';
 import { C } from '../../theme';
 
 const TABS = [
   { key: 'requested', label: 'Requested', status: 'PENDING' },
   { key: 'accepted', label: 'Accepted', status: 'CONFIRMED' },
-  { key: 'upcoming', label: 'Upcoming', status: 'ONGOING' },
+  { key: 'ongoing', label: 'Ongoing', status: 'ONGOING' },
   { key: 'rejected', label: 'Rejected', status: 'NO_DRIVER_AVAILABLE,CANCELLED' },
 ];
 
 const STATUS_META = {
   PENDING: { label: 'Waiting for drivers', bg: C.warning, soft: C.accentSoft, dot: '#FF9500' },
   CONFIRMED: { label: 'Accepted', bg: C.success, soft: C.successSoft, dot: '#22B358' },
-  ONGOING: { label: 'Upcoming', bg: C.info, soft: C.infoSoft, dot: '#3B82F6' },
+  ONGOING: { label: 'Ongoing', bg: C.info, soft: C.infoSoft, dot: '#3B82F6' },
   NO_DRIVER_AVAILABLE: { label: 'No driver available', bg: C.danger, soft: C.dangerSoft, dot: '#EF4444' },
   CANCELLED: { label: 'Cancelled', bg: C.textMuted, soft: '#F0F0F2', dot: '#9E9EA7' },
 };
 
+const OngoingCountdown = ({ startedAt, perHourRate = 210 }) => {
+  const [sec, setSec] = useState(0);
+
+  useEffect(() => {
+    if (!startedAt) return undefined;
+    const tick = () =>
+      setSec(Math.max(0, Math.floor((Date.now() - new Date(startedAt).getTime()) / 1000)));
+    tick();
+    const t = setInterval(tick, 1000);
+    return () => clearInterval(t);
+  }, [startedAt]);
+
+  const bill = liveBill(sec, perHourRate);
+
+  return (
+    <View style={styles.liveRow}>
+      <View style={styles.liveTimerWrap}>
+        <MaterialIcons name="timer" size={18} color={C.info} />
+        <Text style={styles.liveTimerText}>{formatElapsed(sec)}</Text>
+      </View>
+      <View style={styles.liveBillWrap}>
+        <Text style={styles.liveBillValue}>₹{bill.total.toLocaleString('en-IN')}</Text>
+        <Text style={styles.liveBillSub}>{bill.billableHours} hrs • running bill</Text>
+      </View>
+    </View>
+  );
+};
+
 const RequestsScreen = ({ navigation }) => {
+  const alert = useAlert();
   const [activeTab, setActiveTab] = useState('requested');
   const [lists, setLists] = useState({ requested: [], accepted: [], upcoming: [], rejected: [] });
   const [loading, setLoading] = useState(true);
@@ -59,6 +90,8 @@ const RequestsScreen = ({ navigation }) => {
       await loadAll();
       setLoading(false);
     })();
+    const t = setInterval(loadAll, 6000);
+    return () => clearInterval(t);
   }, [loadAll]);
 
   const refresh = async () => {
@@ -73,23 +106,23 @@ const RequestsScreen = ({ navigation }) => {
       const token = await AsyncStorage.getItem('token');
       await cancelActionBooking(booking.id, 'Cancelled by customer', token);
       await loadAll();
-      Alert.alert('Cancelled', 'Booking cancelled');
+      alert.success('Cancelled', 'Booking cancelled.');
     } catch (err) {
-      Alert.alert('Error', err.message || 'Could not cancel booking');
+      alert.error('Could not cancel', err.message || 'Could not cancel booking');
     } finally {
       setCancellingId(null);
     }
   };
 
   const confirmCancel = (booking, feeNote) => {
-    Alert.alert(
-      'Cancel Booking',
-      `Cancel booking ${booking.bookingNumber}?${feeNote ? `\n\n${feeNote}` : ''}`,
-      [
-        { text: 'No', style: 'cancel' },
-        { text: 'Yes, Cancel', style: 'destructive', onPress: () => doCancel(booking) },
-      ]
-    );
+    alert.confirm({
+      title: 'Cancel booking',
+      message: `Cancel booking ${booking.bookingNumber}?${feeNote ? `\n\n${feeNote}` : ''}`,
+      confirmText: 'Yes, Cancel',
+      cancelText: 'No',
+      destructive: true,
+      onConfirm: () => doCancel(booking),
+    });
   };
 
   const handleCancel = async (booking) => {
@@ -183,6 +216,10 @@ const RequestsScreen = ({ navigation }) => {
           </Text>
         </View>
 
+        {item.status === 'ONGOING' && item.startedAt && (
+          <OngoingCountdown startedAt={item.startedAt} perHourRate={item.perHourRate || 210} />
+        )}
+
         {cancelledWithFee && (
           <View style={styles.feeDue}>
             <Text style={styles.feeDueText}>
@@ -264,7 +301,9 @@ const RequestsScreen = ({ navigation }) => {
                   ? 'No pending requests. Book a driver from the Home page.'
                   : activeTab === 'rejected'
                     ? 'No rejected bookings.'
-                    : `No ${activeTab} bookings yet.`}
+                    : activeTab === 'ongoing'
+                      ? 'No ongoing trips right now.'
+                      : `No ${activeTab} bookings yet.`}
               </Text>
             </View>
           }
@@ -399,6 +438,41 @@ const styles = StyleSheet.create({
   summaryText: {
     color: C.textSub,
     fontSize: 12,
+  },
+  liveRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: C.infoSoft,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginTop: 10,
+  },
+  liveTimerWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  liveTimerText: {
+    color: C.info,
+    fontSize: 22,
+    fontWeight: '800',
+    letterSpacing: 1.5,
+    marginLeft: 6,
+    fontVariant: ['tabular-nums'],
+  },
+  liveBillWrap: {
+    alignItems: 'flex-end',
+  },
+  liveBillValue: {
+    color: C.info,
+    fontSize: 15,
+    fontWeight: 'bold',
+  },
+  liveBillSub: {
+    color: C.textSub,
+    fontSize: 11,
+    marginTop: 1,
   },
   reassignNote: {
     backgroundColor: '#FFF4D6',

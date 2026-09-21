@@ -1,4 +1,4 @@
-const API_BASE_URL = 'http://192.168.0.9:5000';
+const API_BASE_URL = 'http://192.168.0.7:5000';
 
 const request = async (path, method = 'GET', body = null, token = null) => {
   const headers = {};
@@ -144,5 +144,9 @@ export const verifyActionPayment = (id, payload, token) =>
 // Get final fare + payment status for a completed trip.
 export const getActionTripFare = (id, token) =>
   request(`/api/action/customers/bookings/${id}/fare`, 'GET', null, token);
+
+// Rate the driver of a completed trip (1-5 stars + optional comment).
+export const rateActionBooking = (id, payload, token) =>
+  request(`/api/action/customers/bookings/${id}/rate`, 'POST', payload, token);
 
 export default request;
