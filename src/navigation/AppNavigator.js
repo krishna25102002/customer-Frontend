@@ -38,6 +38,11 @@ const AppNavigator = () => {
         initialRouteName="Login"
         screenOptions={{
           headerShown: false,
+          animation: 'slide_from_right',
+          animationDuration: 350,
+          animationMatchesGesture: true,
+          gestureEnabled: true,
+          fullScreenGestureEnabled: true,
         }}
       > 
         <Stack.Screen name="Login" component={Login} />
@@ -50,7 +55,6 @@ const AppNavigator = () => {
         <Stack.Screen name="AdvanceBooking" component={AdvanceBooking} />
         <Stack.Screen name="TripsScreen" component={TripsScreen} />
         <Stack.Screen name="TripDetails" component={TripDetails} />
-        <Stack.Screen name="PaymentScreen" component={PaymentScreen} />
         <Stack.Screen name="Settings" component={SettingsScreen} />
         <Stack.Screen name="EditProfile" component={EditProfileScreen} />
         <Stack.Screen name="MyVehicle" component={MyVehicleScreen} />
@@ -59,6 +63,11 @@ const AppNavigator = () => {
         <Stack.Screen name="RequestedDriversScreen" component={RequestedDriversScreen} />
         <Stack.Screen name="RequestedDriverDetail" component={RequestedDriverDetail} />
         <Stack.Screen name="RequestSentScreen" component={RequestSentScreen} />
+        <Stack.Screen
+          name="PaymentScreen"
+          component={PaymentScreen}
+          options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
+        />
         
       </Stack.Navigator>
     </NavigationContainer>

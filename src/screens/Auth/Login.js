@@ -12,6 +12,7 @@ import { useNavigation } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { loginCustomer } from '../../api';
 import { useAlert } from '../../components/AlertProvider';
+import { FadeInUp, ScalePressable } from '../../components/Animations';
 import { C } from '../../theme';
 
 const Login = () => {
@@ -52,20 +53,26 @@ const Login = () => {
   return (
     <View style={styles.container}>
       {/* HERO BAND */}
-      <View style={styles.hero}>
+      <FadeInUp style={styles.hero}>
         <Text style={styles.logo}>
           Caption<Text style={styles.logoAccent}>X</Text>
         </Text>
         <Text style={styles.partner}>Customer</Text>
-      </View>
+      </FadeInUp>
 
       {/* TITLE */}
-      <Text style={styles.welcome}>Welcome</Text>
-      <Text style={styles.title}>Good to see you! 👋</Text>
-      <Text style={styles.subtitle}>Sign in to manage your trips</Text>
+      <FadeInUp delay={80}>
+        <Text style={styles.welcome}>Welcome</Text>
+      </FadeInUp>
+      <FadeInUp delay={110}>
+        <Text style={styles.title}>Good to see you! 👋</Text>
+      </FadeInUp>
+      <FadeInUp delay={140}>
+        <Text style={styles.subtitle}>Sign in to manage your trips</Text>
+      </FadeInUp>
 
       {/* PHONE INPUT */}
-      <View style={styles.inputContainer}>
+      <FadeInUp delay={200} style={styles.inputContainer}>
         <Icon name="phone" size={20} color={C.primary} />
         <TextInput
           placeholder="+91 98765 43210"
@@ -75,10 +82,10 @@ const Login = () => {
           value={phone}
           onChangeText={setPhone}
         />
-      </View>
+      </FadeInUp>
 
       {/* PASSWORD */}
-      <View style={styles.inputContainer}>
+      <FadeInUp delay={260} style={styles.inputContainer}>
         <Icon name="lock" size={20} color={C.primary} />
         <TextInput
           placeholder="Password"
@@ -88,26 +95,34 @@ const Login = () => {
           value={password}
           onChangeText={setPassword}
         />
-      </View>
+      </FadeInUp>
 
       {/* FORGOT */}
-      <TouchableOpacity onPress={() => navigation.navigate('ForgotPassword')}>
-        <Text style={styles.forgot}>Forgot Password?</Text>
-      </TouchableOpacity>
+      <FadeInUp delay={300}>
+        <TouchableOpacity onPress={() => navigation.navigate('ForgotPassword')}>
+          <Text style={styles.forgot}>Forgot Password?</Text>
+        </TouchableOpacity>
+      </FadeInUp>
 
       {/* LOGIN */}
-      <TouchableOpacity style={styles.loginBtn} onPress={handleLogin} disabled={loading}>
-        {loading ? (
-          <ActivityIndicator color="#fff" />
-        ) : (
-          <Text style={styles.loginText}>Login</Text>
-        )}
-      </TouchableOpacity>
+      <FadeInUp delay={350}>
+        <ScalePressable style={styles.loginBtn} onPress={handleLogin} disabled={loading}>
+          {loading ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <Text style={styles.loginText}>Login</Text>
+          )}
+        </ScalePressable>
+      </FadeInUp>
 
-      <Text style={styles.newDriver}>New here?</Text>
-      <TouchableOpacity style={styles.registerBtn} onPress={() => navigation.navigate('Register')}>
-        <Text style={styles.registerText}>Create Account</Text>
-      </TouchableOpacity>
+      <FadeInUp delay={420}>
+        <Text style={styles.newDriver}>New here?</Text>
+      </FadeInUp>
+      <FadeInUp delay={460}>
+        <TouchableOpacity style={styles.registerBtn} onPress={() => navigation.navigate('Register')}>
+          <Text style={styles.registerText}>Create Account</Text>
+        </TouchableOpacity>
+      </FadeInUp>
     </View>
   );
 };

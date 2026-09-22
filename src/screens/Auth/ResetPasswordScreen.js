@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import {
-  View,
   Text,
   TextInput,
   TouchableOpacity,
@@ -12,6 +11,7 @@ import Icon from 'react-native-vector-icons/MaterialIcons';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { resetCustomerPassword } from '../../api';
 import { useAlert } from '../../components/AlertProvider';
+import { FadeInUp, ScalePressable } from '../../components/Animations';
 import { C } from '../../theme';
 
 const ResetPasswordScreen = () => {
@@ -65,11 +65,13 @@ const ResetPasswordScreen = () => {
       keyboardShouldPersistTaps="handled"
       showsVerticalScrollIndicator={false}
     >
-      <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-        <Icon name="arrow-back" size={22} color={C.primary} />
-      </TouchableOpacity>
+      <FadeInUp>
+        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
+          <Icon name="arrow-back" size={22} color={C.primary} />
+        </TouchableOpacity>
+      </FadeInUp>
 
-      <View style={styles.hero}>
+      <FadeInUp delay={80} style={styles.hero}>
         <Text style={styles.logo}>
           Caption<Text style={styles.logoAccent}>X</Text>
         </Text>
@@ -77,9 +79,9 @@ const ResetPasswordScreen = () => {
         <Text style={styles.heroSub}>
           Enter the OTP sent to {email || 'your email'}, then choose your new password.
         </Text>
-      </View>
+      </FadeInUp>
 
-      <View style={styles.inputContainer}>
+      <FadeInUp delay={160} style={styles.inputContainer}>
         <Icon name="security" size={20} color={C.primary} />
         <TextInput
           placeholder="OTP from email"
@@ -90,9 +92,9 @@ const ResetPasswordScreen = () => {
           value={otp}
           onChangeText={setOtp}
         />
-      </View>
+      </FadeInUp>
 
-      <View style={styles.inputContainer}>
+      <FadeInUp delay={210} style={styles.inputContainer}>
         <Icon name="lock" size={20} color={C.primary} />
         <TextInput
           placeholder="New password (min 6 chars)"
@@ -102,9 +104,9 @@ const ResetPasswordScreen = () => {
           value={newPassword}
           onChangeText={setNewPassword}
         />
-      </View>
+      </FadeInUp>
 
-      <View style={styles.inputContainer}>
+      <FadeInUp delay={260} style={styles.inputContainer}>
         <Icon name="lock" size={20} color={C.primary} />
         <TextInput
           placeholder="Confirm new password"
@@ -114,15 +116,17 @@ const ResetPasswordScreen = () => {
           value={confirmPassword}
           onChangeText={setConfirmPassword}
         />
-      </View>
+      </FadeInUp>
 
-      <TouchableOpacity style={styles.resetBtn} onPress={handleReset} disabled={loading}>
-        {loading ? (
-          <ActivityIndicator color="#fff" />
-        ) : (
-          <Text style={styles.resetText}>Reset Password</Text>
-        )}
-      </TouchableOpacity>
+      <FadeInUp delay={320}>
+        <ScalePressable style={styles.resetBtn} onPress={handleReset} disabled={loading}>
+          {loading ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <Text style={styles.resetText}>Reset Password</Text>
+          )}
+        </ScalePressable>
+      </FadeInUp>
     </ScrollView>
   );
 };

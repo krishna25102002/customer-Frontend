@@ -12,6 +12,7 @@ import { useNavigation } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { registerCustomer, loginCustomer } from '../../api';
 import { useAlert } from '../../components/AlertProvider';
+import { FadeInUp, ScalePressable } from '../../components/Animations';
 import { C } from '../../theme';
 
 const RegisterScreen = () => {
@@ -62,80 +63,96 @@ const RegisterScreen = () => {
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-      <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()}>
-        <Text style={styles.backText}>← Back to login</Text>
-      </TouchableOpacity>
+      <FadeInUp>
+        <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()}>
+          <Text style={styles.backText}>← Back to login</Text>
+        </TouchableOpacity>
+      </FadeInUp>
 
-      <View style={styles.hero}>
+      <FadeInUp delay={70} style={styles.hero}>
         <Text style={styles.heroTitle}>Create Account</Text>
         <Text style={styles.heroSubtitle}>Fill in your details to get started</Text>
-      </View>
+      </FadeInUp>
 
-      <TextInput
-        placeholder="Full name"
-        placeholderTextColor={C.textMuted}
-        style={inputStyles(name)}
-        value={name}
-        onChangeText={setName}
-      />
-
-      <TextInput
-        placeholder="+91 98765 43210"
-        placeholderTextColor={C.textMuted}
-        style={inputStyles(phone)}
-        keyboardType="phone-pad"
-        value={phone}
-        onChangeText={setPhone}
-      />
-
-      <TextInput
-        placeholder="Email address"
-        placeholderTextColor={C.textMuted}
-        style={inputStyles(email)}
-        keyboardType="email-address"
-        value={email}
-        onChangeText={setEmail}
-      />
-
-      <TextInput
-        placeholder="Password"
-        placeholderTextColor={C.textMuted}
-        style={inputStyles(password)}
-        secureTextEntry
-        value={password}
-        onChangeText={setPassword}
-      />
-
-      <View style={styles.row}>
+      <FadeInUp delay={130}>
         <TextInput
-          placeholder="City"
+          placeholder="Full name"
           placeholderTextColor={C.textMuted}
-          style={[styles.input, styles.halfInput, city && styles.inputFilled]}
-          value={city}
-          onChangeText={setCity}
+          style={inputStyles(name)}
+          value={name}
+          onChangeText={setName}
         />
+      </FadeInUp>
+
+      <FadeInUp delay={170}>
         <TextInput
-          placeholder="State"
+          placeholder="+91 98765 43210"
           placeholderTextColor={C.textMuted}
-          style={[styles.input, styles.halfInput, state && styles.inputFilled]}
-          value={state}
-          onChangeText={setState}
+          style={inputStyles(phone)}
+          keyboardType="phone-pad"
+          value={phone}
+          onChangeText={setPhone}
         />
-      </View>
+      </FadeInUp>
 
-      <TouchableOpacity style={styles.button} onPress={handleSubmit} disabled={loading}>
-        {loading ? (
-          <ActivityIndicator color="#fff" />
-        ) : (
-          <Text style={styles.buttonText}>Submit & Continue</Text>
-        )}
-      </TouchableOpacity>
+      <FadeInUp delay={210}>
+        <TextInput
+          placeholder="Email address"
+          placeholderTextColor={C.textMuted}
+          style={inputStyles(email)}
+          keyboardType="email-address"
+          value={email}
+          onChangeText={setEmail}
+        />
+      </FadeInUp>
 
-      <View style={styles.steps}>
-        <View style={[styles.dot, styles.activeDot]} />
-        <View style={styles.dot} />
-        <View style={styles.dot} />
-      </View>
+      <FadeInUp delay={250}>
+        <TextInput
+          placeholder="Password"
+          placeholderTextColor={C.textMuted}
+          style={inputStyles(password)}
+          secureTextEntry
+          value={password}
+          onChangeText={setPassword}
+        />
+      </FadeInUp>
+
+      <FadeInUp delay={290}>
+        <View style={styles.row}>
+          <TextInput
+            placeholder="City"
+            placeholderTextColor={C.textMuted}
+            style={[styles.input, styles.halfInput, city && styles.inputFilled]}
+            value={city}
+            onChangeText={setCity}
+          />
+          <TextInput
+            placeholder="State"
+            placeholderTextColor={C.textMuted}
+            style={[styles.input, styles.halfInput, state && styles.inputFilled]}
+            value={state}
+            onChangeText={setState}
+          />
+        </View>
+      </FadeInUp>
+
+      <FadeInUp delay={340}>
+        <ScalePressable style={styles.button} onPress={handleSubmit} disabled={loading}>
+          {loading ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <Text style={styles.buttonText}>Submit & Continue</Text>
+          )}
+        </ScalePressable>
+      </FadeInUp>
+
+      <FadeInUp delay={400}>
+        <View style={styles.steps}>
+          <View style={[styles.dot, styles.activeDot]} />
+          <View style={styles.dot} />
+          <View style={styles.dot} />
+        </View>
+      </FadeInUp>
     </ScrollView>
   );
 };

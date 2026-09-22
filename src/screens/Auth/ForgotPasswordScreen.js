@@ -12,6 +12,7 @@ import Icon from 'react-native-vector-icons/MaterialIcons';
 import { useNavigation } from '@react-navigation/native';
 import { forgotCustomerPassword } from '../../api';
 import { useAlert } from '../../components/AlertProvider';
+import { FadeInUp, ScalePressable } from '../../components/Animations';
 import { C } from '../../theme';
 
 const ForgotPasswordScreen = () => {
@@ -46,11 +47,13 @@ const ForgotPasswordScreen = () => {
       keyboardShouldPersistTaps="handled"
       showsVerticalScrollIndicator={false}
     >
-      <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-        <Icon name="arrow-back" size={22} color={C.primary} />
-      </TouchableOpacity>
+      <FadeInUp>
+        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
+          <Icon name="arrow-back" size={22} color={C.primary} />
+        </TouchableOpacity>
+      </FadeInUp>
 
-      <View style={styles.hero}>
+      <FadeInUp delay={80} style={styles.hero}>
         <Text style={styles.logo}>
           Caption<Text style={styles.logoAccent}>X</Text>
         </Text>
@@ -59,31 +62,35 @@ const ForgotPasswordScreen = () => {
           We'll email a one-time verification code to your registered address so
           you can set a new password.
         </Text>
-      </View>
+      </FadeInUp>
 
-      <View style={styles.field}>
-        <View style={styles.inputContainer}>
-          <Icon name="email" size={20} color={C.primary} />
-          <TextInput
-            placeholder="Registered email address"
-            placeholderTextColor={C.textMuted}
-            style={styles.input}
-            keyboardType="email-address"
-            autoCapitalize="none"
-            autoCorrect={false}
-            value={email}
-            onChangeText={setEmail}
-          />
+      <FadeInUp delay={160}>
+        <View style={styles.field}>
+          <View style={styles.inputContainer}>
+            <Icon name="email" size={20} color={C.primary} />
+            <TextInput
+              placeholder="Registered email address"
+              placeholderTextColor={C.textMuted}
+              style={styles.input}
+              keyboardType="email-address"
+              autoCapitalize="none"
+              autoCorrect={false}
+              value={email}
+              onChangeText={setEmail}
+            />
+          </View>
         </View>
-      </View>
+      </FadeInUp>
 
-      <TouchableOpacity style={styles.sendBtn} onPress={handleSend} disabled={loading}>
-        {loading ? (
-          <ActivityIndicator color="#fff" />
-        ) : (
-          <Text style={styles.sendText}>Send OTP</Text>
-        )}
-      </TouchableOpacity>
+      <FadeInUp delay={230}>
+        <ScalePressable style={styles.sendBtn} onPress={handleSend} disabled={loading}>
+          {loading ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <Text style={styles.sendText}>Send OTP</Text>
+          )}
+        </ScalePressable>
+      </FadeInUp>
     </ScrollView>
   );
 };
