@@ -30,6 +30,15 @@ export const registerCustomer = (payload) =>
 export const loginCustomer = (payload) =>
   request('/api/customer/auth/login', 'POST', payload);
 
+export const forgotCustomerPassword = (payload) =>
+  request('/api/customer/auth/forgotPassword', 'POST', payload);
+
+export const verifyCustomerResetOtp = (payload) =>
+  request('/api/customer/auth/verifyResetOtp', 'POST', payload);
+
+export const resetCustomerPassword = (payload) =>
+  request('/api/customer/auth/resetPassword', 'POST', payload);
+
 export const getCustomerProfile = (token) =>
   request('/api/customer/auth/profile', 'GET', null, token);
 
@@ -59,6 +68,15 @@ export const updateCustomerVehicleModel = (id, payload, token) =>
 // =====================
 export const getNearbyDrivers = (latitude, longitude) =>
   request(`/api/customer/drivers/nearby?latitude=${latitude}&longitude=${longitude}`);
+
+export const getDriverProfile = (id, token) =>
+  request(`/api/customer/drivers/${id}/profile`, 'GET', null, token);
+
+// =====================
+// Map (server-side Geoapify, key stays on the server)
+// =====================
+export const getReverseGeocode = (latitude, longitude, token) =>
+  request(`/api/map/reverse?lat=${latitude}&lng=${longitude}`, 'GET', null, token);
 
 // =====================
 // Bookings

@@ -7,25 +7,32 @@ import { C } from '../theme';
 const BottomTab = ({ activeTab, onTabPress }) => {
   const navigation = useNavigation();
 
-  const Tab = ({ name, icon, target }) => (
-    <TouchableOpacity onPress={() => navigation.navigate(target)}>
-      <View style={styles.tab}>
-        <Icon name={icon} size={22} color={activeTab === name ? C.accent : C.textMuted} />
-        <Text style={[styles.text, activeTab === name && styles.active]}>{name}</Text>
-        {activeTab === name && <View style={styles.activeDot} />}
-      </View>
-    </TouchableOpacity>
-  );
+  const goToTab = target => {
+    if (onTabPress) {
+      onTabPress();
+      return;
+    }
+    navigation.navigate(target);
+  };
 
   return (
     <View style={styles.container}>
-      <Tab name="Home" icon="home" target="customerHome" />
-      <Tab name="Trips" icon="location" target="TripsScreen" />
-      <Tab name="Requests" icon="notifications" target="RequestsScreen" />
-      <Tab name="Settings" icon="settings" target="Settings" />
+      <Tab name="Home" icon="home" target="customerHome" onPress={() => goToTab('customerHome')} active={activeTab === 'Home'} />
+      <Tab name="Trips" icon="location" target="TripsScreen" onPress={() => goToTab('TripsScreen')} active={activeTab === 'Trips'} />
+      <Tab name="Settings" icon="settings" target="Settings" onPress={() => goToTab('Settings')} active={activeTab === 'Settings'} />
     </View>
   );
 };
+
+const Tab = ({ name, icon, target, onPress, active }) => (
+  <TouchableOpacity onPress={onPress} accessibilityRole="button" accessibilityLabel={target}>
+    <View style={styles.tab}>
+      <Icon name={icon} size={22} color={active ? C.accent : C.textMuted} />
+      <Text style={[styles.text, active && styles.active]}>{name}</Text>
+      {active && <View style={styles.activeDot} />}
+    </View>
+  </TouchableOpacity>
+);
 
 export default BottomTab;
 

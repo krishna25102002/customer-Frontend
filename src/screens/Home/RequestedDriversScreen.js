@@ -165,7 +165,7 @@ const RequestedDriversScreen = ({ navigation }) => {
         />
       )}
 
-      <BottomTab navigation={navigation} activeTab="Requests" />
+      <BottomTab navigation={navigation} activeTab="Trips" />
     </View>
   );
 };

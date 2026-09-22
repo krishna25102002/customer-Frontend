@@ -126,7 +126,7 @@ const SettingsScreen = () => {
         danger
         onPress={handleLogout}
       />
-      <BottomTab active="Settings" />
+      <BottomTab activeTab="Settings" />
     </SafeAreaView>
   );
 };

@@ -26,8 +26,8 @@ const RegisterScreen = () => {
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async () => {
-    if (!name || !phone || !password) {
-      alert.warning('Incomplete details', 'Please fill Name, Phone and Password');
+    if (!name || !email || !phone || !password) {
+      alert.warning('Incomplete details', 'Please fill Name, Email, Phone and Password');
       return;
     }
 

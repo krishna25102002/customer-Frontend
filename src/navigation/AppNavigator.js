@@ -5,6 +5,8 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 
 import Login from '../screens/Auth/Login';
 import RegisterScreen from '../screens/Auth/RegisterScreen';
+import ForgotPasswordScreen from '../screens/Auth/ForgotPasswordScreen';
+import ResetPasswordScreen from '../screens/Auth/ResetPasswordScreen';
 import CustomerDashboard from '../screens/Home/CustomerDashboard';
 import DriverProfile from '../screens/Home/DriverProfile';
 import WaitingScreen from './../screens/Home/WaitingScreen';
@@ -24,7 +26,6 @@ import RequestSentScreen from './../screens/Home/RequestSentScreen';
 import { TripProvider } from '../context/TripContext';
 import { AuthProvider } from '../context/AuthContext';
 import MyVehicleScreen from './../screens/Home/MyVehicleScreen';
-import RequestsScreen from './../screens/Home/RequestsScreen';
 
 const Stack = createNativeStackNavigator();
 
@@ -41,6 +42,8 @@ const AppNavigator = () => {
       > 
         <Stack.Screen name="Login" component={Login} />
         <Stack.Screen name="Register" component={RegisterScreen} />
+        <Stack.Screen name="ForgotPassword" component={ForgotPasswordScreen} />
+        <Stack.Screen name="ResetPassword" component={ResetPasswordScreen} />
         <Stack.Screen name="customerHome" component={CustomerDashboard} />
         <Stack.Screen name="DriverProfile" component={DriverProfile} />
         <Stack.Screen name="WaitingScreen" component={WaitingScreen} />
@@ -56,7 +59,6 @@ const AppNavigator = () => {
         <Stack.Screen name="RequestedDriversScreen" component={RequestedDriversScreen} />
         <Stack.Screen name="RequestedDriverDetail" component={RequestedDriverDetail} />
         <Stack.Screen name="RequestSentScreen" component={RequestSentScreen} />
-        <Stack.Screen name="RequestsScreen" component={RequestsScreen} />
         
       </Stack.Navigator>
     </NavigationContainer>

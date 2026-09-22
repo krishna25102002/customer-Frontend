@@ -18,9 +18,11 @@ import {
   RefreshControl,
   Modal,
   Platform,
+  PermissionsAndroid,
 } from 'react-native';
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import Geolocation from '@react-native-community/geolocation';
 import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 
 import BottomTab from '../../components/BottomTab';
@@ -34,6 +36,7 @@ import {
   getActionAvailableDrivers,
   createActionBooking,
   getActionBookings,
+  getReverseGeocode,
 } from '../../api';
 
 import { formatElapsed, liveBill, runElapsed } from '../../utils/liveBill';
@@ -59,6 +62,56 @@ const DURATION_PAD_COUNT =
   Math.floor(
     DURATION_VISIBLE_ITEMS / 2
   );
+
+/* ============================================================
+   LOCATION HELPERS
+============================================================ */
+
+// Great-circle distance in km between two lat/lng points.
+const distanceKm = (lat1, lng1, lat2, lng2) => {
+  const toRad = (n) => (Number(n) || 0) * (Math.PI / 180);
+  const R = 6371;
+  const dLat = toRad(lat2) - toRad(lat1);
+  const dLng = toRad(lng2) - toRad(lng1);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(lat1)) *
+      Math.cos(toRad(lat2)) *
+      Math.sin(dLng / 2) *
+      Math.sin(dLng / 2);
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(a)));
+};
+
+// Driver location is stored as GeoJSON `location.coordinates = [lng, lat]`.
+const driverLatLng = (d) => {
+  const c = d && d.location && d.location.coordinates;
+  if (!c || !Array.isArray(c) || c.length < 2) return null;
+  const lng = Number(c[0]);
+  const lat = Number(c[1]);
+  return Number.isFinite(lat) && Number.isFinite(lng) && !(lat === 0 && lng === 0)
+    ? { lat, lng }
+    : null;
+};
+
+const distanceLabel = (km) => {
+  if (km == null || !isFinite(km)) return '';
+  if (km < 1) return '< 1 km';
+  if (km < 10) return `${km.toFixed(1)} km`;
+  return `${Math.round(km)} km`;
+};
+
+const statusOf = (d) => {
+  if (!d) return 'Offline';
+  if (d.accountStatus === 'Busy') return 'Busy';
+  if (d.accountStatus === 'Online') return d.isAvailable ? 'Online' : 'Busy';
+  return 'Offline';
+};
+
+const statusColor = (status) => {
+  if (status === 'Busy') return '#d97706';
+  if (status === 'Online') return '#16a34a';
+  return '#9ca3af';
+};
 
 /* ============================================================
    TIME HELPERS
@@ -125,6 +178,11 @@ const fmtDate = (d) => {
 
   return `${y}-${m}-${day}`;
 };
+
+// Grow an address input field as the text (e.g. a long reverse-geocoded
+// address) wraps, capped so it never pushes the booking form off-screen.
+const growInputHeight = (h) =>
+  Math.max(48, Math.min(h || 48, 140));
 
 /* ============================================================
    DURATION WHEEL PICKER
@@ -817,13 +875,265 @@ const CustomerDashboard = ({
   const [duration, setDuration] =
     useState(6);
 
-  const [pickup, setPickup] =
-    useState(
-      'Koramangala 5th Block'
-    );
+const [pickup, setPickup] =
+    useState('');
 
   const [drop, setDrop] =
     useState('');
+
+  const [pickupLat, setPickupLat] =
+    useState(null);
+
+  const [pickupLng, setPickupLng] =
+    useState(null);
+
+  const [dropLat, setDropLat] =
+    useState(null);
+
+  const [dropLng, setDropLng] =
+    useState(null);
+
+  const [pickupInputH, setPickupInputH] =
+    useState(null);
+
+  const [dropInputH, setDropInputH] =
+    useState(null);
+
+  const pickupInputStyle = [
+    styles.input,
+    {
+      height: growInputHeight(
+        pickupInputH
+      ),
+    },
+  ];
+
+  const dropInputStyle = [
+    styles.input,
+    {
+      height: growInputHeight(
+        dropInputH
+      ),
+    },
+  ];
+
+  // Which field is currently reading the device GPS: 'pickup' | 'drop' | null
+  const [locBusy, setLocBusy] =
+    useState(null);
+
+  // Current device locality shown in the dashboard header (e.g. "Koramangala, Bengaluru").
+  const [userLocation, setUserLocation] =
+    useState('');
+
+  // Live device coordinates (kept in a ref so loaders can use them without
+  // dependency re-runs) + flag so the GPS pickup is only seeded once.
+  const myCoordsRef = useRef(null);
+  const pickupSeededRef = useRef(false);
+
+  const fillFromCurrentLocation =
+    useCallback(
+      async (field) => {
+        if (locBusy) return;
+
+        setLocBusy(field);
+
+        try {
+          let granted = true;
+
+          if (Platform.OS === 'android') {
+            granted =
+              (await PermissionsAndroid.request(
+                PermissionsAndroid.PERMISSIONS
+                  .ACCESS_FINE_LOCATION,
+                {
+                  title: 'Location access',
+                  message:
+                    'Allow CaptainX to use your current location for the pickup and drop.',
+                  buttonPositive: 'Allow',
+                }
+              )) ===
+              PermissionsAndroid.RESULTS.GRANTED;
+
+            if (!granted) {
+              alert.warning(
+                'Location permission needed',
+                'Allow location access to auto-fill your address.'
+              );
+            }
+          }
+
+          if (!granted) return;
+
+          const position =
+            await new Promise(
+              (resolve, reject) =>
+                Geolocation.getCurrentPosition(
+                  resolve,
+                  reject,
+                  {
+                    enableHighAccuracy: true,
+                    timeout: 15000,
+                    maximumAge: 0,
+                  }
+                )
+            );
+
+          const lat =
+            Number(
+              position.coords.latitude
+            );
+
+          const lng =
+            Number(
+              position.coords.longitude
+            );
+
+          if (
+            !Number.isFinite(lat) ||
+            !Number.isFinite(lng) ||
+            (lat === 0 && lng === 0)
+          ) {
+            throw new Error(
+              'Could not get a GPS fix. Enable Location (Settings) and try again.'
+            );
+          }
+
+          let address = `Current location (${lat.toFixed(5)}, ${lng.toFixed(5)})`;
+
+          try {
+            const token =
+              await AsyncStorage.getItem(
+                'token'
+              );
+
+            const geo =
+              await getReverseGeocode(
+                lat,
+                lng,
+                token
+              );
+
+            if (
+              geo &&
+              geo.address
+            ) {
+              address = geo.address;
+            }
+          } catch (err) {
+            // Reverse geocode failed — keep the coordinate fallback label.
+          }
+
+          if (field === 'pickup') {
+            setPickup(address);
+            setPickupLat(lat);
+            setPickupLng(lng);
+          } else {
+            setDrop(address);
+            setDropLat(lat);
+            setDropLng(lng);
+          }
+        } catch (err) {
+          alert.error(
+            'Could not get location',
+            err?.message || 'Please try again.'
+          );
+        } finally {
+          setLocBusy(null);
+        }
+      },
+      [locBusy, alert]
+    );
+
+  const loadHeaderLocation = useCallback(async () => {
+    try {
+      let granted = true;
+
+      if (Platform.OS === 'android') {
+        granted =
+          (await PermissionsAndroid.request(
+            PermissionsAndroid.PERMISSIONS
+              .ACCESS_FINE_LOCATION,
+            {
+              title: 'Location access',
+              message:
+                'Allow CaptainX to show your current location.',
+              buttonPositive: 'Allow',
+            }
+          )) ===
+          PermissionsAndroid.RESULTS.GRANTED;
+      }
+
+      if (!granted) return;
+
+      const position =
+        await new Promise(
+          (resolve, reject) =>
+            Geolocation.getCurrentPosition(
+              resolve,
+              reject,
+              {
+                enableHighAccuracy: true,
+                timeout: 15000,
+                maximumAge: 0,
+              }
+            )
+        );
+
+      const lat =
+        Number(
+          position.coords.latitude
+        );
+
+      const lng =
+        Number(
+          position.coords.longitude
+        );
+
+      if (
+        !Number.isFinite(lat) ||
+        !Number.isFinite(lng) ||
+        (lat === 0 && lng === 0)
+      ) {
+        return;
+      }
+
+      // Keep the live device coords for driver distance + booking defaults.
+      myCoordsRef.current = { lat, lng };
+
+      const token =
+        await AsyncStorage.getItem(
+          'token'
+        );
+
+      const geo =
+        await getReverseGeocode(
+          lat,
+          lng,
+          token
+        );
+
+      const label =
+        geo?.shortLabel ||
+        geo?.address ||
+        'Your location';
+
+      setUserLocation(label);
+
+      // Seed the pickup field with the real current location once.
+      if (!pickupSeededRef.current) {
+        pickupSeededRef.current = true;
+        setPickup(label);
+        setPickupLat(lat);
+        setPickupLng(lng);
+      }
+    } catch (err) {
+      // GPS/geocode failed — keep the header fallback text.
+    }
+  }, []);
+
+  useEffect(() => {
+    loadHeaderLocation();
+  }, [loadHeaderLocation]);
 
   const [available, setAvailable] =
     useState([]);
@@ -1050,11 +1360,20 @@ const CustomerDashboard = ({
     const loadDrivers =
       async () => {
         try {
+          await loadHeaderLocation();
+
+          const coord =
+            myCoordsRef.current;
+
           const latitude =
-            12.9716;
+            coord
+              ? coord.lat
+              : 12.9716;
 
           const longitude =
-            77.5946;
+            coord
+              ? coord.lng
+              : 77.5946;
 
           const data =
             await getNearbyDrivers(
@@ -1064,31 +1383,50 @@ const CustomerDashboard = ({
 
           setDrivers(
             (data.drivers || []).map(
-              (d) => ({
-                id:
-                  d._id ||
-                  d.id,
+              (d) => {
+                const c =
+                  coord &&
+                  driverLatLng(d);
+                const km =
+                  c
+                    ? distanceKm(
+                        coord.lat,
+                        coord.lng,
+                        c.lat,
+                        c.lng
+                      )
+                    : null;
 
-                name:
-                  d.fullName ||
-                  d.name,
+                return {
+                  id:
+                    d._id ||
+                    d.id,
 
-                rating:
-                  d.rating != null
-                    ? d.rating
-                    : '4.9',
+                  name:
+                    d.fullName ||
+                    d.name,
 
-                trips:
-                  d.totalTrips ||
-                  d.trips ||
-                  0,
+                  rating:
+                    d.rating != null
+                      ? d.rating
+                      : 5,
 
-                distance:
-                  'Nearby',
+                  trips:
+                    d.totalTrips ||
+                    d.trips ||
+                    0,
 
-                status:
-                  'Online',
-              })
+                  ratingCount:
+                    d.ratingCount ??
+                    0,
+
+                  distance:
+                    distanceLabel(km),
+
+                  status:
+                    statusOf(d),
+                };
+              }
             )
           );
         } catch (err) {
@@ -1301,6 +1639,15 @@ const CustomerDashboard = ({
         return;
       }
 
+      if (!pickup.trim()) {
+        alert.warning(
+          'Pickup required',
+          'Set your pickup address (use current location) before booking.'
+        );
+
+        return;
+      }
+
       setSending(true);
 
       try {
@@ -1329,6 +1676,12 @@ const CustomerDashboard = ({
                 pickup.trim(),
               dropAddress:
                 drop.trim(),
+              pickupLatitude:
+                pickupLat,
+              pickupLongitude:
+                pickupLng,
+              dropLatitude: dropLat,
+              dropLongitude: dropLng,
               driverIds: ids,
             },
             token
@@ -1445,6 +1798,9 @@ const CustomerDashboard = ({
               >
                 ⭐ {item.rating} •{' '}
                 {item.trips} trips
+                {item.ratingCount === 0
+                  ? ' • New driver'
+                  : ''}
               </Text>
             </View>
 
@@ -1526,6 +1882,9 @@ const CustomerDashboard = ({
               >
                 ⭐ {item.rating} •{' '}
                 {item.trips} trips
+                {item.ratingCount === 0
+                  ? ' • New driver'
+                  : ''}
               </Text>
             </View>
 
@@ -1535,12 +1894,25 @@ const CustomerDashboard = ({
                   'flex-end',
               }}
             >
+              {item.distance ? (
+                <Text
+                  style={styles.distance}
+                >
+                  {item.distance}
+                </Text>
+              ) : null}
               <Text
-                style={
-                  styles.online
-                }
+                style={[
+                  styles.online,
+                  {
+                    color: statusColor(
+                      item.status
+                    ),
+                  },
+                ]}
               >
-                ● Online
+                ● {item.status ||
+                  'Online'}
               </Text>
             </View>
           </View>
@@ -1552,6 +1924,19 @@ const CustomerDashboard = ({
   /* ========================================================
      HEADER
   ======================================================== */
+
+  const nowHour = new Date().getHours();
+
+  const greeting =
+    nowHour < 5
+      ? 'Good night, 🌙'
+      : nowHour < 12
+      ? 'Good morning, 🌅'
+      : nowHour < 17
+      ? 'Good afternoon, ☀️'
+      : nowHour < 21
+      ? 'Good evening, 🌆'
+      : 'Pleasent night, 🌙';
 
   const header = (
     <View>
@@ -1574,7 +1959,7 @@ const CustomerDashboard = ({
                   styles.greeting
                 }
               >
-                Good morning,
+                {greeting}
               </Text>
 
               <Text
@@ -1611,20 +1996,9 @@ const CustomerDashboard = ({
               styles.location
             }
           >
-            📍 Koramangala,
-            Bengaluru
+            📍 {userLocation ||
+                'Detecting location…'}
           </Text>
-
-          <View
-            style={
-              styles.searchBox
-            }
-          >
-            <MaterialIcons
-              name="search"
-              size={20}
-              color={C.textMuted}
-            />
 
             <TextInput
               placeholder="Where do you want to go?"
@@ -1635,7 +2009,6 @@ const CustomerDashboard = ({
                 styles.searchInput
               }
             />
-          </View>
         </View>
       </Animated.View>
 
@@ -1978,15 +2351,52 @@ const CustomerDashboard = ({
           />
 
           <TextInput
-            style={styles.input}
+            style={pickupInputStyle}
+            multiline
             value={pickup}
             onChangeText={setPickup}
+            onContentSizeChange={(e) =>
+              setPickupInputH(
+                e.nativeEvent.contentSize
+                  .height
+              )
+            }
             placeholder="Pickup address"
             placeholderTextColor={
               C.textMuted
             }
           />
         </View>
+
+        <TouchableOpacity
+          style={styles.gpsBtn}
+          onPress={() =>
+            fillFromCurrentLocation('pickup')
+          }
+          disabled={locBusy !== null}
+          activeOpacity={0.7}
+        >
+          {locBusy === 'pickup' ? (
+            <ActivityIndicator
+              size="small"
+              color={C.primary}
+            />
+          ) : (
+            <MaterialIcons
+              name="my-location"
+              size={16}
+              color={C.primary}
+            />
+          )}
+
+          <Text
+            style={styles.gpsBtnText}
+          >
+            {locBusy === 'pickup'
+              ? 'Getting your location…'
+              : 'Use my current location'}
+          </Text>
+        </TouchableOpacity>
 
         {/* DROP */}
 
@@ -2006,9 +2416,16 @@ const CustomerDashboard = ({
           />
 
           <TextInput
-            style={styles.input}
+            style={dropInputStyle}
+            multiline
             value={drop}
             onChangeText={setDrop}
+            onContentSizeChange={(e) =>
+              setDropInputH(
+                e.nativeEvent.contentSize
+                  .height
+              )
+            }
             placeholder="Drop address"
             placeholderTextColor={
               C.textMuted
@@ -2223,11 +2640,20 @@ const CustomerDashboard = ({
                     );
 
                     try {
+                      await loadHeaderLocation();
+
+                      const coord =
+                        myCoordsRef.current;
+
                       const latitude =
-                        12.9716;
+                        coord
+                          ? coord.lat
+                          : 12.9716;
 
                       const longitude =
-                        77.5946;
+                        coord
+                          ? coord.lng
+                          : 77.5946;
 
                       const data =
                         await getNearbyDrivers(
@@ -2239,8 +2665,21 @@ const CustomerDashboard = ({
                         (
                           data.drivers ||
                           []
-                        ).map(
-                          (d) => ({
+                        ).map((d) => {
+                          const c =
+                            coord &&
+                            driverLatLng(d);
+                          const km =
+                            c
+                              ? distanceKm(
+                                  coord.lat,
+                                  coord.lng,
+                                  c.lat,
+                                  c.lng
+                                )
+                              : null;
+
+                          return {
                             id:
                               d._id ||
                               d.id,
@@ -2253,20 +2692,24 @@ const CustomerDashboard = ({
                               d.rating !=
                               null
                                 ? d.rating
-                                : '4.9',
+                                : 5,
 
                             trips:
                               d.totalTrips ||
                               d.trips ||
                               0,
 
+                            ratingCount:
+                              d.ratingCount ??
+                              0,
+
                             distance:
-                              'Nearby',
+                              distanceLabel(km),
 
                             status:
-                              'Online',
-                          })
-                        )
+                              statusOf(d),
+                          };
+                        })
                       );
                     } catch (err) {
                       console.log(
@@ -2721,6 +3164,37 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
 
+  gpsBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+
+    backgroundColor:
+      C.accentSoft,
+
+    borderWidth: 1,
+
+    borderColor:
+      C.accentBorder,
+
+    borderRadius: 12,
+
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+
+    marginTop: 4,
+    marginBottom: 12,
+  },
+
+  gpsBtnText: {
+    color:
+      C.primaryDark,
+
+    fontWeight: '600',
+    fontSize: 13,
+    marginLeft: 6,
+  },
+
   input: {
     flex: 1,
     color: C.text,
@@ -2889,6 +3363,13 @@ const styles = StyleSheet.create({
     fontSize: 12,
 
     fontWeight: '600',
+    marginTop: 2,
+  },
+
+  distance: {
+    color: C.textSub,
+
+    fontSize: 12,
   },
 
   checkbox: {

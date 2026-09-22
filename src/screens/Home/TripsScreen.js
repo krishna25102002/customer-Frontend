@@ -14,7 +14,9 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 
 import BottomTab from '../../components/BottomTab';
-import { getBookings, getActionBookings } from '../../api';
+import { getBookings, getActionBookings, previewActionCancellation, cancelActionBooking } from '../../api';
+import { useAlert } from '../../components/AlertProvider';
+import { formatElapsed, liveBill } from '../../utils/liveBill';
 import { C } from '../../theme';
 
 const { width } = Dimensions.get('window');
@@ -102,7 +104,39 @@ const normalizeBooking = (b) => {
     unavailabilityDescription: b.unavailabilityDescription || null,
     cancelledAt: b.cancelledAt || null,
     flowStatus: b.flowStatus || null,
+    startedAt: b.startedAt || b.tripStartedAt || null,
+    perHourRate: b.perHourRate || 210,
+    amountDue: b.amountDue || 0,
+    requestSummary: b.requestSummary || null,
   };
+};
+
+const OngoingCountdown = ({ startedAt, perHourRate = 210 }) => {
+  const [sec, setSec] = useState(0);
+
+  useEffect(() => {
+    if (!startedAt) return undefined;
+    const tick = () =>
+      setSec(Math.max(0, Math.floor((Date.now() - new Date(startedAt).getTime()) / 1000)));
+    tick();
+    const t = setInterval(tick, 1000);
+    return () => clearInterval(t);
+  }, [startedAt]);
+
+  const bill = liveBill(sec, perHourRate);
+
+  return (
+    <View style={styles.liveRow}>
+      <View style={styles.liveTimerWrap}>
+        <MaterialIcons name="timer" size={18} color={C.info} />
+        <Text style={styles.liveTimerText}>{formatElapsed(sec)}</Text>
+      </View>
+      <View style={styles.liveBillWrap}>
+        <Text style={styles.liveBillValue}>₹{bill.total.toLocaleString('en-IN')}</Text>
+        <Text style={styles.liveBillSub}>{bill.billableHours} hrs • running bill</Text>
+      </View>
+    </View>
+  );
 };
 
 /* ============================================================
@@ -110,12 +144,14 @@ const normalizeBooking = (b) => {
 ============================================================ */
 
 const TripsScreen = ({ navigation }) => {
+  const alert = useAlert();
   const [activeTab, setActiveTab] = useState('Upcoming');
   const slideAnim = useRef(new Animated.Value(0)).current;
   const [trips, setTrips] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [customerName, setCustomerName] = useState('');
+  const [cancellingId, setCancellingId] = useState(null);
 
   useEffect(() => {
     (async () => {
@@ -163,6 +199,56 @@ const TripsScreen = ({ navigation }) => {
   useEffect(() => {
     load();
   }, [load]);
+
+  useEffect(() => {
+    const t = setInterval(load, 6000);
+    return () => clearInterval(t);
+  }, [load]);
+
+  const doCancel = async (booking) => {
+    setCancellingId(booking.id);
+    try {
+      const token = await AsyncStorage.getItem('token');
+      await cancelActionBooking(booking.id, 'Cancelled by customer', token);
+      await load();
+      alert.success('Cancelled', 'Booking cancelled.');
+    } catch (err) {
+      alert.error('Could not cancel', err.message || 'Could not cancel booking');
+    } finally {
+      setCancellingId(null);
+    }
+  };
+
+  const confirmCancel = (booking, feeNote) => {
+    alert.confirm({
+      title: 'Cancel booking',
+      message: `Cancel booking ${booking.bookingNumber}?${feeNote ? `\n\n${feeNote}` : ''}`,
+      confirmText: 'Yes, Cancel',
+      cancelText: 'No',
+      destructive: true,
+      onConfirm: () => doCancel(booking),
+    });
+  };
+
+  const handleCancel = async (booking) => {
+    if (booking.status !== 'CONFIRMED') {
+      confirmCancel(booking, null);
+      return;
+    }
+    try {
+      const token = await AsyncStorage.getItem('token');
+      const preview = await previewActionCancellation(booking.id, token);
+      const fee = Number(preview.cancellationFee || 0);
+      confirmCancel(
+        booking,
+        fee > 0
+          ? `A cancellation fee of ₹${fee.toLocaleString('en-IN')} will be added to your dues.`
+          : 'No cancellation fee applies at this stage.'
+      );
+    } catch (err) {
+      confirmCancel(booking, null);
+    }
+  };
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
@@ -266,6 +352,34 @@ const TripsScreen = ({ navigation }) => {
                 <Text style={styles.payBadgeText}>{item.paymentStatus}</Text>
               </View>
             </View>
+
+            {item.status === 'ONGOING' && item.startedAt && (
+              <OngoingCountdown startedAt={item.startedAt} perHourRate={item.perHourRate} />
+            )}
+
+            {isCancelled && Number(item.amountDue) > 0 && (
+              <View style={styles.feeDue}>
+                <Text style={styles.feeDueText}>
+                  Cancellation fee payable: ₹{Number(item.amountDue).toLocaleString('en-IN')}
+                </Text>
+              </View>
+            )}
+
+            {(item.status === 'PENDING' || item.status === 'CONFIRMED') && (
+              <TouchableOpacity
+                style={styles.cancelBtn}
+                onPress={() => handleCancel(item)}
+                disabled={cancellingId === item.id}
+              >
+                {cancellingId === item.id ? (
+                  <ActivityIndicator color={C.danger} />
+                ) : (
+                  <Text style={styles.cancelText}>
+                    {item.status === 'PENDING' ? 'Cancel Request' : 'Cancel Booking'}
+                  </Text>
+                )}
+              </TouchableOpacity>
+            )}
 
             {isCancelled && (item.cancelReason || item.unavailabilityDescription) && (
               <View style={styles.reasonBox}>
@@ -724,5 +838,76 @@ const styles = StyleSheet.create({
     color: C.textMuted,
     fontSize: 13,
     marginTop: 4,
+  },
+
+  liveRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: C.infoSoft,
+    borderRadius: 14,
+    padding: 12,
+    marginTop: 10,
+  },
+
+  liveTimerWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+
+  liveTimerText: {
+    color: C.info,
+    fontWeight: 'bold',
+    fontSize: 15,
+    marginLeft: 6,
+    fontVariant: ['tabular-nums'],
+  },
+
+  liveBillWrap: {
+    alignItems: 'flex-end',
+  },
+
+  liveBillValue: {
+    color: C.info,
+    fontWeight: 'bold',
+    fontSize: 15,
+  },
+
+  liveBillSub: {
+    color: C.textMuted,
+    fontSize: 10,
+    marginTop: 1,
+  },
+
+  feeDue: {
+    backgroundColor: '#F3F3F5',
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    marginTop: 10,
+    alignItems: 'center',
+  },
+
+  feeDueText: {
+    color: C.danger,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+
+  cancelBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: C.danger,
+    borderRadius: 20,
+    paddingVertical: 9,
+    marginTop: 10,
+  },
+
+  cancelText: {
+    color: C.danger,
+    fontWeight: '700',
+    fontSize: 13,
   },
 });
