@@ -1,4 +1,7 @@
-const API_BASE_URL = 'http://192.168.0.7:5000';
+// const API_BASE_URL = 'http://192.168.0.7:5000';
+//https://api.krishnan8nyoutube.online
+const API_BASE_URL = 'https://api.krishnan8nyoutube.online';
+export const SOCKET_BASE_URL = API_BASE_URL;
 
 const request = async (path, method = 'GET', body = null, token = null) => {
   const headers = {};
@@ -77,6 +80,17 @@ export const getDriverProfile = (id, token) =>
 // =====================
 export const getReverseGeocode = (latitude, longitude, token) =>
   request(`/api/map/reverse?lat=${latitude}&lng=${longitude}`, 'GET', null, token);
+
+export const getMapStyle = (style = 'rastertiles/voyager', token) =>
+  request(`/api/map/style?style=${encodeURIComponent(style)}`, 'GET', null, token);
+
+export const fetchRouteOnMap = (from, to, mode = 'drive', token) =>
+  request('/api/map/route', 'POST', { ...from, ...to, mode }, token);
+
+// Latest driver position + pickup/drop pins for an active booking (REST
+// fallback used before the socket catches up / after an app restart).
+export const getCustomerTracking = (id, token) =>
+  request(`/api/customers/bookings/${id}/tracking`, 'GET', null, token);
 
 // =====================
 // Bookings

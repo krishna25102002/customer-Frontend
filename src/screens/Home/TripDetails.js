@@ -20,8 +20,16 @@ import {
   previewActionCancellation,
   cancelActionBooking,
   rateActionBooking,
+  getCustomerTracking,
 } from '../../api';
 import { useAlert } from '../../components/AlertProvider';
+import LiveTrackingMap from '../../components/LiveTrackingMap';
+import useLiveBookingSocket, {
+  SOCKET_CONNECTED,
+  SOCKET_RECONNECTING,
+  SOCKET_DISCONNECTED,
+} from '../../hooks/useLiveBookingSocket';
+import useCustomerLocation from '../../hooks/useCustomerLocation';
 import { C } from '../../theme';
 
 const { width } = Dimensions.get('window');
@@ -84,6 +92,63 @@ const formatElapsed = (s) => {
 
   const [elapsed, setElapsed] = useState(0);
   const startedAtRef = useRef(null);
+
+  // ---- Live location tracking (customer <- booking room) ----
+  const [driverPosition, setDriverPosition] = useState(null);
+  const [trackingState, setTrackingState] = useState(null);
+
+  const isTrackable = status === 'CONFIRMED' || status === 'ONGOING';
+
+  const trackingSocket = useLiveBookingSocket({
+    bookingId,
+    role: 'customer',
+    enabled: isTrackable,
+    onDriverLocation: (p) => setDriverPosition((prev) => ({ ...prev, ...p })),
+    onTrackingState: (p) => setTrackingState(p.state || null),
+  });
+
+  const customerLoc = useCustomerLocation({
+    enabled: isTrackable,
+    onPosition: trackingSocket.sendLocation,
+  });
+
+  // REST fallback: seed the driver's last known position + pickup/drop pins
+  // before the socket catches up (app restart / reconnect).
+  useEffect(() => {
+    if (!isTrackable || !bookingId) return;
+    let alive = true;
+    (async () => {
+      try {
+        const token = await AsyncStorage.getItem('token');
+        if (!token || !alive) return;
+        const t = await getCustomerTracking(bookingId, token);
+        if (!alive || !t?.success) return;
+        const d = t.latestDriverLocation;
+        if (d && Number.isFinite(Number(d.latitude))) {
+          setDriverPosition((prev) => ({
+            latitude: d.latitude,
+            longitude: d.longitude,
+            accuracy: d.accuracy || 0,
+            heading: d.heading || 0,
+            timestamp: d.timestamp,
+            ...prev,
+          }));
+        }
+        if (t.pickupLocation?.latitude) {
+          setTrip((prev) =>
+            prev?.pickupLocation
+              ? prev
+              : { ...prev, pickupLocation: t.pickupLocation, dropLocation: t.dropLocation }
+          );
+        }
+      } catch (err) {
+        // best-effort fallback — the socket + poll cover this screen.
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [isTrackable, bookingId]);
 
   useEffect(() => {
     startedAtRef.current = trip?.startedAt || null;
@@ -360,6 +425,53 @@ const formatElapsed = (s) => {
               <Text style={styles.liveSub}>
                 Trip in progress — from {trip?.pickupAddressTxt || trip?.pickupAddress || 'pickup'}
               </Text>
+            </View>
+          ) : null}
+
+          {isTrackable ? (
+            <View style={styles.trackCard}>
+              <View style={styles.trackHead}>
+                <MaterialIcons name="radar" size={16} color={C.accent} />
+                <Text style={styles.trackTitle}>Track your driver</Text>
+                {trackingState === 'driver_arrived' ? (
+                  <View style={[styles.trackPill, { backgroundColor: C.successSoft }]}>
+                    <MaterialIcons name="check-circle" size={13} color={C.success} />
+                    <Text style={[styles.trackPillText, { color: C.success }]}>Driver arrived</Text>
+                  </View>
+                ) : trackingState === 'driver_en_route' ? (
+                  <View style={[styles.trackPill, { backgroundColor: C.infoSoft }]}>
+                    <MaterialIcons name="directions-car" size={13} color={C.info} />
+                    <Text style={[styles.trackPillText, { color: C.info }]}>En route</Text>
+                  </View>
+                ) : trackingSocket.connection === SOCKET_CONNECTED ? (
+                  <View style={[styles.trackPill, { backgroundColor: C.successSoft }]}>
+                    <MaterialIcons name="wifi" size={13} color={C.success} />
+                    <Text style={[styles.trackPillText, { color: C.success }]}>Live</Text>
+                  </View>
+                ) : null}
+              </View>
+
+              <LiveTrackingMap
+                style={styles.trackMap}
+                driverLocation={driverPosition}
+                customerLocation={customerLoc.position}
+                pickup={trip?.pickupLocation}
+                drop={trip?.dropLocation}
+                showRoute
+                showRecenterButton
+              />
+
+              {trackingSocket.connection === SOCKET_RECONNECTING && (
+                <Text style={styles.trackHint}>Reconnecting… showing last known position.</Text>
+              )}
+              {trackingSocket.connection === SOCKET_DISCONNECTED && (
+                <Text style={styles.trackHint}>
+                  Offline — {driverPosition ? 'showing last known position.' : 'waiting for the driver location.'}
+                </Text>
+              )}
+              {trackingState === 'driver_offline' && (
+                <Text style={styles.trackHint}>Driver is offline right now.</Text>
+              )}
             </View>
           ) : null}
 
@@ -709,6 +821,49 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     backgroundColor: C.primary,
     alignItems: 'center',
+  },
+  trackCard: {
+    marginHorizontal: 14,
+    marginBottom: 14,
+    padding: 14,
+    borderRadius: 16,
+    backgroundColor: C.surface,
+    borderWidth: 1,
+    borderColor: C.border,
+    ...C.shadow,
+  },
+  trackHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  trackTitle: {
+    flex: 1,
+    marginLeft: 6,
+    color: C.text,
+    fontSize: 15,
+    fontWeight: 'bold',
+  },
+  trackPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  trackPillText: {
+    marginLeft: 4,
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  trackMap: {
+    height: 220,
+  },
+  trackHint: {
+    marginTop: 8,
+    color: C.textMuted,
+    fontSize: 12,
+    textAlign: 'center',
   },
   livePill: {
     flexDirection: 'row',
